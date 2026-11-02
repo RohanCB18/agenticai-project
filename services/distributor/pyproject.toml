@@ -1,0 +1,13 @@
+[project]
+name = "munshi-distributor"
+version = "0.1.0"
+description = "A wholesaler's agent that Munshi negotiates reorders with over A2A."
+requires-python = ">=3.12"
+dependencies = ["fastapi>=0.162", "uvicorn>=0.54", "pydantic-settings>=2.16"]
+
+[project.scripts]
+munshi-distributor = "munshi_distributor.app:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"

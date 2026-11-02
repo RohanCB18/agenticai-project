@@ -1,0 +1,49 @@
+@import "tailwindcss";
+
+/* Palette: ledger-book paper with fountain-pen indigo ink. */
+:root {
+  --paper: #f6f7fb;
+  --surface: #ffffff;
+  --ink: #161a2e;
+  --muted: #5b6078;
+  --line: #dde0ec;
+  --accent: #2f3fa8;
+  --on-accent: #ffffff;
+  --danger: #b3261e;
+  --danger-soft: #fbe9e7;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --paper: #0e1020;
+    --surface: #171a2e;
+    --ink: #e8eaf6;
+    --muted: #a0a5c0;
+    --line: #2a2e48;
+    --accent: #8f9cff;
+    --on-accent: #0e1020;
+    --danger: #f28b82;
+    --danger-soft: #3a1a18;
+    color-scheme: dark;
+  }
+}
+
+@theme inline {
+  --color-paper: var(--paper);
+  --color-surface: var(--surface);
+  --color-ink: var(--ink);
+  --color-muted: var(--muted);
+  --color-line: var(--line);
+  --color-accent: var(--accent);
+  --color-on-accent: var(--on-accent);
+  --color-danger: var(--danger);
+  --color-danger-soft: var(--danger-soft);
+  --font-sans: var(--font-body), system-ui, sans-serif;
+  --font-display: var(--font-display), var(--font-body), system-ui, sans-serif;
+  --font-mono: var(--font-mono), ui-monospace, monospace;
+}
+
+body {
+  background: var(--paper);
+  color: var(--ink);
+}

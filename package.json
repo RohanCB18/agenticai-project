@@ -1,0 +1,26 @@
+{
+  "name": "munshi",
+  "private": true,
+  "packageManager": "npm@10.9.3",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "turbo run dev",
+    "build": "turbo run build",
+    "lint": "turbo run lint",
+    "typecheck": "turbo run typecheck",
+    "test": "turbo run test",
+    "db:start": "supabase start",
+    "db:reset": "supabase db reset",
+    "db:types": "supabase gen types typescript --local > packages/db/src/database.types.ts"
+  },
+  "devDependencies": {
+    "supabase": "^3.0.0",
+    "turbo": "^2.11.10"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}
