@@ -2,12 +2,26 @@
 
 A voice-first AI bookkeeper for Indian shops. A shop owner speaks in Kannada, Hindi, Tamil or Bengali; Munshi keeps the khata, collects udhaar over UPI, manages stock, pays suppliers and handles GST. Every rupee it moves waits for the owner's "haan".
 
-> Status: **Phase 0 (foundation)**. Auth, schema with row-level security, observability wiring, service skeletons and CI.
+> Status: **Phase 1 (core agent)**. A khata agent on Sarvam-105B (Claude as fallback) records udhaar, payments, sales and stock from chat, and sends Cashfree UPI payment links after the owner approves. Paid links update the khata through a signed webhook.
+
+## How the agent works
+
+```
+owner message ──► /api/chat ──► ToolLoopAgent (AI SDK 7)
+                                   │  model: sarvam-105b ──(error)──► claude-opus-5-5
+                                   │  tools: findCustomer, addCustomer, recordCredit, recordPayment,
+                                   │         recordSale, getBalances, getStock, updateStock, sendPaymentLink
+                                   ▼
+                    sendPaymentLink needs owner approval (HMAC-signed) ──► Cashfree Payment Link
+                                                                              │ customer pays via UPI
+                    khata updated ◄── payment_received ◄── /api/webhooks/cashfree (signature verified)
+```
 
 ## Layout
 
 ```
-apps/web               Next.js 16 app: auth, khata dashboard (agents and chat arrive in Phase 1)
+apps/web               Next.js 16 app: auth, khata dashboard, chat with tool and approval cards, Cashfree webhook
+packages/agents        Khata agent, tools, Sarvam→Claude fallback model, name matching for spoken names
 packages/db            Shared money helpers (paise), zod schemas, generated DB types
 supabase/              Migrations, seed data, pgTAP RLS tests
 services/mcp           FastMCP server exposing the khata to any MCP host (Phase 5: MCP Apps)
@@ -23,7 +37,7 @@ Prerequisites: Node 22+, Docker Desktop (running), [uv](https://docs.astral.sh/u
 npm install
 npm run db:start          # starts local Supabase in Docker, applies migrations + seed
 npx supabase status       # copy the API URL and publishable key
-cp apps/web/.env.example apps/web/.env.local   # paste the two values in
+cp apps/web/.env.example apps/web/.env.local   # fill in Supabase, Sarvam, Anthropic, Cashfree sandbox keys
 npm run dev               # http://localhost:3000
 ```
 

@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { connection } from "next/server";
 import { Suspense } from "react";
 import { formatINR } from "@munshi/db";
@@ -39,9 +40,14 @@ async function Books() {
           <p className="text-sm uppercase tracking-wider text-muted">Khata</p>
           <h1 className="font-display text-3xl font-semibold">{merchant.shopName}</h1>
         </div>
-        <form action={signOut}>
-          <button className="text-sm text-muted underline-offset-4 hover:underline">Sign out</button>
-        </form>
+        <div className="flex items-center gap-4">
+          <Link href="/chat" className="rounded-md bg-accent px-4 py-2 font-medium text-on-accent">
+            Talk to Munshi
+          </Link>
+          <form action={signOut}>
+            <button className="text-sm text-muted underline-offset-4 hover:underline">Sign out</button>
+          </form>
+        </div>
       </header>
 
       <section className="grid gap-4 sm:grid-cols-2">

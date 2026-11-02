@@ -7,16 +7,22 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "typecheck": "next typegen && tsc --noEmit"
+    "typecheck": "next typegen && tsc --noEmit",
+    "test": "vitest run"
   },
   "dependencies": {
+    "@ai-sdk/anthropic": "^4.0.94",
+    "@ai-sdk/openai-compatible": "^3.0.82",
+    "@ai-sdk/react": "^4.0.163",
     "@langfuse/otel": "^6.1.0",
     "@langfuse/tracing": "^6.1.0",
+    "@munshi/agents": "*",
     "@munshi/db": "*",
     "@opentelemetry/api": "^1.9.0",
     "@supabase/ssr": "^0.12.7",
     "@supabase/supabase-js": "^2.118.0",
     "@vercel/otel": "^2.2.0",
+    "ai": "^7.0.159",
     "next": "16.4.4",
     "react": "19.3.0",
     "react-dom": "19.3.0",
@@ -31,6 +37,7 @@
     "eslint": "^9",
     "eslint-config-next": "16.4.4",
     "tailwindcss": "^4",
-    "typescript": "^5"
+    "typescript": "^5",
+    "vitest": "^5.0.5"
   }
 }

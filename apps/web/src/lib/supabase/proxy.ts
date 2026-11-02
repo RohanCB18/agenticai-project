@@ -30,7 +30,9 @@ export async function updateSession(request: NextRequest) {
   const { data } = await supabase.auth.getClaims();
   const signedIn = Boolean(data?.claims?.sub);
 
-  if (!signedIn && !isPublic(request.nextUrl.pathname)) {
+  // API routes answer 401 themselves (and webhooks have no session), so never redirect them.
+  const isApi = request.nextUrl.pathname.startsWith("/api/");
+  if (!signedIn && !isApi && !isPublic(request.nextUrl.pathname)) {
     const url = request.nextUrl.clone();
     url.pathname = "/login";
     url.searchParams.set("next", request.nextUrl.pathname);
