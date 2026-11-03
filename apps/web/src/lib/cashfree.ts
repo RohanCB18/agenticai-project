@@ -66,7 +66,7 @@ export async function createPaymentLink(input: CreateLinkInput): Promise<Cashfre
       customer_details: { customer_name: input.customer.name, customer_phone: tenDigit(input.customer.phone) },
       link_notify: { send_sms: true, send_email: false },
       link_expiry_time: input.expiresAt.toISOString(),
-      link_meta: { upi_intent: "true", payment_methods: "upi", ...(input.notifyUrl ? { notify_url: input.notifyUrl } : {}) },
+      link_meta: { upi_intent: true, payment_methods: "upi", ...(input.notifyUrl ? { notify_url: input.notifyUrl } : {}) },
       link_notes: input.notes,
     }),
   });

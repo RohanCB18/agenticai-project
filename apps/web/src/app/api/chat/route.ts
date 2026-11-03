@@ -43,5 +43,15 @@ export async function POST(request: Request) {
     approvalSecret,
   });
 
-  return createAgentUIStreamResponse({ agent, uiMessages: messages });
+  return createAgentUIStreamResponse({
+    agent,
+    uiMessages: messages,
+    // Tool and stream errors are masked as "An error occurred." by default. Log the real
+    // cause, and show it in the chat during development so failures are debuggable.
+    onError: (error) => {
+      console.error("[munshi] chat error:", error);
+      if (process.env.NODE_ENV !== "production" && error instanceof Error) return error.message;
+      return "Something went wrong. Please try again.";
+    },
+  });
 }

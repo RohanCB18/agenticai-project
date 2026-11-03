@@ -123,19 +123,26 @@ export function createSupabaseKhataStore(db: SupabaseClient, merchantId: string,
       const linkId = `munshi_${crypto.randomUUID().replaceAll("-", "")}`.slice(0, 50);
       const expiresAt = new Date(Date.now() + LINK_TTL_MS);
       const appUrl = process.env.PUBLIC_APP_URL;
-      const link = await createCashfreeLink({
-        linkId,
-        amountPaise,
-        purpose,
-        customer: { name: customer.name, phone: customer.phone },
-        expiresAt,
-        // Cashfree only calls https URLs, so local dev relies on the dashboard webhook or a tunnel.
-        notifyUrl: appUrl?.startsWith("https://") ? `${appUrl}/api/webhooks/cashfree` : undefined,
-        notes: { merchant_id: merchantId, customer_id: customer.id },
-      });
+      // Approval status past "approved" is server-written only (RLS), so use the admin client.
+      const admin = createAdminClient();
+      let link;
+      try {
+        link = await createCashfreeLink({
+          linkId,
+          amountPaise,
+          purpose,
+          customer: { name: customer.name, phone: customer.phone },
+          expiresAt,
+          // Cashfree only calls https URLs, so local dev relies on the dashboard webhook or a tunnel.
+          notifyUrl: appUrl?.startsWith("https://") ? `${appUrl}/api/webhooks/cashfree` : undefined,
+          notes: { merchant_id: merchantId, customer_id: customer.id },
+        });
+      } catch (error) {
+        await admin.from("approvals").update({ status: "failed" }).eq("id", approval.id);
+        throw error;
+      }
 
       // Payment link rows are server-written only (RLS gives owners read access).
-      const admin = createAdminClient();
       const row = must(
         await admin
           .from("payment_links")

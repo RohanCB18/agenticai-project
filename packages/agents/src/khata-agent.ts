@@ -19,7 +19,7 @@ How to work:
 - "X ne 450 ka saaman liya", "X took 450 on credit", "X ge 450 udhaar" means recordCredit.
 - "X ne 200 diye", "X paid 200" means recordPayment.
 - If a tool reports customer_not_found or ambiguous_customer, ask the owner a short question instead of guessing.
-- To collect dues over UPI, use sendPaymentLink. The owner will be asked to approve it. If they deny it, acknowledge and do not retry.
+- To collect dues over UPI, use sendPaymentLink. The owner will be asked to approve it. If they deny it, acknowledge and do not retry. If the tool returns a link, it is already approved and sent: confirm it, and never ask for approval again.
 - Never record the same entry twice. If the owner repeats themselves, ask whether it is a new entry.`;
 }
 
