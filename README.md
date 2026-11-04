@@ -2,12 +2,14 @@
 
 A voice-first AI bookkeeper for Indian shops. A shop owner speaks in Kannada, Hindi, Tamil or Bengali; Munshi keeps the khata, collects udhaar over UPI, manages stock, pays suppliers and handles GST. Every rupee it moves waits for the owner's "haan".
 
-> Status: **Phase 1 (core agent)**. A khata agent on Sarvam-105B (Claude as fallback) records udhaar, payments, sales and stock from chat, and sends Cashfree UPI payment links after the owner approves. Paid links update the khata through a signed webhook.
+> Status: **Phase 2 (voice)**. A khata agent on Sarvam-105B (Claude as fallback) records udhaar, payments, sales and stock, and sends Cashfree UPI payment links after the owner approves. Paid links update the khata through a signed webhook. The owner can tap the mic and speak in any Indian language: Saaras v4 transcribes it (biased toward the shop's customer and product names), and Bulbul speaks the reply back in the same language.
 
 ## How the agent works
 
 ```
-owner message ──► /api/chat ──► ToolLoopAgent (AI SDK 7)
+🎤 speech ──► /api/voice/transcribe (Saaras v4) ─┐
+                                                  ▼
+owner message ──► /api/chat ──► ToolLoopAgent (AI SDK 7) ──► reply ──► /api/voice/speak (Bulbul) ──► 🔊
                                    │  model: sarvam-105b ──(error)──► claude-opus-5-5
                                    │  tools: findCustomer, addCustomer, recordCredit, recordPayment,
                                    │         recordSale, getBalances, getStock, updateStock, sendPaymentLink

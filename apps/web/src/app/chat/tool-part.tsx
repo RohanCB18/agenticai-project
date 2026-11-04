@@ -101,6 +101,12 @@ function Output({ name, out }: { name: string; out: Record<string, unknown> }) {
     );
   }
 
+  if (name === "findCustomer" && Array.isArray(out.matches)) {
+    const matches = out.matches as { name: string; phone: string | null }[];
+    if (matches.length === 0) return <p>No match.</p>;
+    return <p>{matches.map((m) => m.name).join(", ")}</p>;
+  }
+
   if (name === "sendPaymentLink" && out.status === "sent") {
     return (
       <div className="flex flex-col gap-1">

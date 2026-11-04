@@ -34,10 +34,13 @@ export async function POST(request: Request) {
     throw error;
   }
 
-  const { messages } = await request.json();
+  const { messages } = (await request.json()) as { messages: { role?: string; metadata?: { source?: string } }[] };
+  // The chat UI marks spoken messages; entries from them are logged with source "voice".
+  const lastUser = messages.findLast((m) => m.role === "user");
+  const source = lastUser?.metadata?.source === "voice" ? "voice" : "chat";
   const agent = createKhataAgent({
     model,
-    store: createSupabaseKhataStore(supabase, merchant.id, { source: "chat" }),
+    store: createSupabaseKhataStore(supabase, merchant.id, { source }),
     shopName: merchant.shop_name,
     language: merchant.preferred_language,
     approvalSecret,
