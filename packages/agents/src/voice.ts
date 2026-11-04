@@ -76,13 +76,14 @@ export function speakableText(text: string) {
   return lastStop > TTS_MAX_CHARS / 2 ? cut.slice(0, lastStop + 1) : cut;
 }
 
-/** Speaks `text` with Bulbul and returns WAV bytes. */
+/** Speaks `text` with Bulbul and returns audio bytes (WAV for browsers, MP3 for WhatsApp). */
 export async function synthesize(opts: {
   apiKey: string;
   text: string;
   languageCode: string;
   model?: string;
   speaker?: string;
+  codec?: "wav" | "mp3";
   fetch?: typeof fetch;
 }): Promise<Uint8Array> {
   const text = speakableText(opts.text);
@@ -98,7 +99,7 @@ export async function synthesize(opts: {
       model: opts.model ?? "bulbul:v3",
       ...(opts.speaker ? { speaker: opts.speaker } : {}),
       pace: 1.05,
-      output_audio_codec: "wav",
+      output_audio_codec: opts.codec ?? "wav",
     }),
   });
   if (!res.ok) throw new SarvamSpeechError(res.status, await res.text(), "text-to-speech");

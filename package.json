@@ -14,7 +14,9 @@
     "test": "turbo run test",
     "db:start": "supabase start",
     "db:reset": "supabase db reset",
-    "db:types": "supabase gen types typescript --local > packages/db/src/database.types.ts"
+    "db:types": "supabase gen types typescript --local > packages/db/src/database.types.ts",
+    "telegram:dev": "npm run telegram:dev --workspace @munshi/web",
+    "telegram:webhook": "npm run telegram:webhook --workspace @munshi/web --"
   },
   "devDependencies": {
     "supabase": "^3.0.0",

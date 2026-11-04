@@ -8,7 +8,9 @@
     "start": "next start",
     "lint": "eslint",
     "typecheck": "next typegen && tsc --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "telegram:dev": "node --env-file=.env.local scripts/telegram-dev.mjs",
+    "telegram:webhook": "node --env-file=.env.local scripts/telegram-dev.mjs set-webhook"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^4.0.94",

@@ -5,6 +5,7 @@ import { formatINR } from "@munshi/db";
 import { getCurrentMerchant } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 import { signOut } from "../login/actions";
+import { ChannelCard } from "./channel-card";
 
 export default function DashboardPage() {
   return (
@@ -21,14 +22,22 @@ async function Books() {
   await connection();
   const merchant = await getCurrentMerchant();
   const supabase = await createClient();
-  const [{ data: balances }, { data: lowStock }] = await Promise.all([
+  const [{ data: balances }, { data: lowStock }, { data: links }] = await Promise.all([
     supabase
       .from("customer_balances")
       .select("customer_id, name, outstanding_paise, last_credit_at")
       .gt("outstanding_paise", 0)
       .order("outstanding_paise", { ascending: false }),
     supabase.from("products").select("id, name, unit, stock_qty, reorder_level"),
+    supabase.from("channel_links").select("channel, external_user_id, profile_name"),
   ]);
+
+  const linkedAs = (channel: "telegram" | "whatsapp") => {
+    const link = links?.find((l) => l.channel === channel);
+    if (!link) return null;
+    if (channel === "whatsapp") return "+" + link.external_user_id.replace(/^(\d{2})(\d+)(\d{4})$/, (_: string, cc: string, mid: string, end: string) => `${cc} ${"•".repeat(mid.length)}${end}`);
+    return link.profile_name ?? "your Telegram";
+  };
 
   const totalUdhaar = (balances ?? []).reduce((sum, b) => sum + Number(b.outstanding_paise), 0);
   const reorder = (lowStock ?? []).filter((p) => p.reorder_level !== null && Number(p.stock_qty) <= Number(p.reorder_level));
@@ -61,6 +70,12 @@ async function Books() {
           <p className="font-display text-4xl font-semibold tabular-nums">{reorder.length}</p>
           <p className="text-sm text-muted">{reorder.map((p) => p.name).join(", ") || "Stock is healthy"}</p>
         </div>
+      </section>
+
+      <section className="grid gap-4 sm:grid-cols-2">
+        <ChannelCard channel="telegram" configured={Boolean(process.env.TELEGRAM_BOT_TOKEN)} linkedAs={linkedAs("telegram")} />
+        {/* WhatsApp shares the same core but needs a Meta app; the card appears once its keys are set. */}
+        {process.env.WHATSAPP_TOKEN && <ChannelCard channel="whatsapp" configured linkedAs={linkedAs("whatsapp")} />}
       </section>
 
       <section className="flex flex-col gap-3">

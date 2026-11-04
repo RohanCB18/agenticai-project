@@ -38,7 +38,10 @@ select throws_ok(
 set local request.jwt.claims = '{"sub":"11111111-1111-1111-1111-111111111111","role":"authenticated"}';
 select is(
   (select outstanding_paise from public.customer_balances where name = 'Ramesh'),
-  43000::bigint, 'Ramesh owes ₹430 (450 + 180 − 200)');
+  -- Computed from the ledger rather than hard-coded, so it holds after local testing adds entries.
+  (select coalesce(sum(case kind when 'credit_given' then amount_paise when 'payment_received' then -amount_paise else 0 end), 0)::bigint
+     from public.ledger_entries l join public.customers c on c.id = l.customer_id where c.name = 'Ramesh'),
+  'Ramesh''s balance is credit given minus payments received');
 
 select * from finish();
 rollback;

@@ -1,0 +1,181 @@
+import "server-only";
+import {
+  approvalResponse,
+  closePendingApprovals,
+  type PendingApproval,
+  pendingApprovals,
+  SARVAM_LANGUAGE,
+  synthesize,
+  transcribe,
+  trimThread,
+} from "@munshi/agents";
+import { formatINR, type Language, rupeesToPaise } from "@munshi/db";
+import type { SupabaseClient } from "@supabase/supabase-js";
+import type { ModelMessage } from "ai";
+import { buildKhataAgent } from "@/lib/agent";
+import { createAdminClient } from "@/lib/supabase/admin";
+import type { ChannelSender, Inbound, LinkButton, MessagingChannel } from "./types";
+
+const APP_NAME: Record<MessagingChannel, string> = { telegram: "Telegram", whatsapp: "WhatsApp" };
+
+const notLinked = (channel: MessagingChannel) =>
+  `Namaste! This chat isn't linked to a Munshi shop yet. Open Munshi → Dashboard → Connect ${APP_NAME[channel]}.`;
+
+const HELP =
+  'Send me a voice note or a text in any language, like "Ramesh ne 450 ka saaman liya", "Fatima ne 200 diye" or "Kaun kaun udhaar pe hai?"';
+
+/**
+ * Handles one incoming chat message on any messaging channel. Runs after the webhook has
+ * answered the platform, using the admin client: there is no browser session, so the
+ * linked chat account is the identity. Every khata query is still scoped to its merchant.
+ */
+export async function handleInbound(inbound: Inbound, sender: ChannelSender) {
+  const admin = createAdminClient();
+  const { channel, chatId } = inbound;
+
+  // Platforms retry webhooks: process each update once.
+  const { error: duplicate } = await admin.from("inbound_updates").insert({ channel, external_id: inbound.updateId });
+  if (duplicate) {
+    if (duplicate.code === "23505") return;
+    throw new Error(`Dedupe failed: ${duplicate.message}`);
+  }
+
+  if (inbound.kind === "link") return linkAccount(admin, inbound, sender);
+
+  const { data: link } = await admin.from("channel_links").select("merchant_id").eq("channel", channel).eq("external_user_id", chatId).maybeSingle();
+  if (!link) {
+    if (inbound.kind === "decision") await inbound.acknowledge?.("stale");
+    return sender.sendText(chatId, notLinked(channel));
+  }
+
+  const { data: merchant, error } = await admin.from("merchants").select("id, shop_name, preferred_language").eq("id", link.merchant_id).single();
+  if (error || !merchant) throw new Error(`Linked merchant missing: ${error?.message}`);
+  const language = merchant.preferred_language as Language;
+
+  const { data: thread } = await admin.from("agent_threads").select("messages").eq("merchant_id", merchant.id).eq("channel", channel).maybeSingle();
+  let messages = (thread?.messages ?? []) as ModelMessage[];
+  let replyLanguage: string | null = null; // set for voice notes: Munshi answers by voice too
+
+  if (inbound.kind === "decision") {
+    const pending = pendingApprovals(messages).find((p) => p.approvalId === inbound.approvalId);
+    if (!pending) {
+      await inbound.acknowledge?.("stale");
+      return sender.sendText(chatId, "That request was already handled.");
+    }
+    await inbound.acknowledge?.(inbound.approved ? "approved" : "denied");
+    messages = [...messages, approvalResponse(pending.approvalId, inbound.approved)];
+  } else {
+    let text = "";
+    if (inbound.kind === "text") {
+      text = inbound.text.trim();
+      if (/^\/(start|help)\b/i.test(text)) return sender.sendText(chatId, `Munshi is ready for ${merchant.shop_name}. ${HELP}`);
+    } else if (inbound.kind === "voice") {
+      const apiKey = process.env.SARVAM_API_KEY;
+      if (!apiKey) throw new Error("SARVAM_API_KEY is missing");
+      await sender.showWorking?.(chatId, "typing");
+      const heard = await transcribe({ apiKey, audio: await inbound.download(), filename: inbound.filename, keyterms: await shopKeyterms(admin, merchant.id) });
+      text = heard.transcript;
+      replyLanguage = heard.languageCode ?? SARVAM_LANGUAGE[language];
+      if (!text) return sender.sendText(chatId, "Couldn't hear that clearly. Please send the voice note again.");
+      await sender.sendText(chatId, `🎤 ${text}`); // show what Munshi heard, so a mishearing is easy to spot
+    } else {
+      return sender.sendText(chatId, `I understand texts and voice notes. I can't read photos or files yet. ${HELP}`);
+    }
+    if (!text) return;
+    messages = [...closePendingApprovals(messages), { role: "user", content: text }];
+  }
+
+  await sender.showWorking?.(chatId, "typing");
+  const agent = buildKhataAgent({ db: admin, merchant: { id: merchant.id, shopName: merchant.shop_name, language }, source: channel, channel });
+  const result = await agent.generate({ messages });
+  messages = trimThread([...messages, ...result.responseMessages]);
+  await admin.from("agent_threads").upsert({ merchant_id: merchant.id, channel, messages, updated_at: new Date().toISOString() });
+
+  // New payment links: make sure the owner gets the link, with a button to pass it on.
+  let reply = result.text.trim();
+  const buttons: LinkButton[] = [];
+  for (const step of result.steps) {
+    for (const r of step.toolResults) {
+      if (r.toolName !== "sendPaymentLink") continue;
+      const out = r.output as { status?: string; url?: string; customer?: string; amount?: string };
+      if (out.status !== "sent" || !out.url) continue;
+      if (!reply.includes(out.url)) reply += `\n\nUPI link: ${out.url}`;
+      const phone = await customerPhone(admin, merchant.id, out.customer);
+      const note = `Namaste ${out.customer ?? ""}, ${merchant.shop_name} ka ${out.amount ?? ""} baaki hai. UPI se yahan pay karein: ${out.url}`;
+      buttons.push({ text: `Send to ${out.customer ?? "customer"} on WhatsApp`, url: `https://wa.me/${phone ?? ""}?text=${encodeURIComponent(note)}` });
+    }
+  }
+
+  if (reply) {
+    await sender.sendText(chatId, reply, buttons);
+    if (replyLanguage) await speakReply(sender, chatId, reply, replyLanguage);
+  }
+  for (const approval of pendingApprovals(messages)) {
+    await sender.sendApproval(chatId, approvalPrompt(approval), approval.approvalId);
+  }
+}
+
+async function linkAccount(admin: SupabaseClient, inbound: Inbound & { kind: "link" }, sender: ChannelSender) {
+  const { channel, chatId } = inbound;
+  const { data: row } = await admin.from("channel_link_codes").select("merchant_id, expires_at").eq("code", inbound.code).eq("channel", channel).maybeSingle();
+  if (!row || new Date(row.expires_at) < new Date()) {
+    return sender.sendText(chatId, `That link has expired. Open Munshi → Dashboard → Connect ${APP_NAME[channel]} for a fresh one.`);
+  }
+
+  // One account per shop and one shop per account: replace any earlier link on either side.
+  await admin.from("channel_links").delete().eq("channel", channel).eq("merchant_id", row.merchant_id);
+  await admin.from("channel_links").delete().eq("channel", channel).eq("external_user_id", chatId);
+  const { error } = await admin
+    .from("channel_links")
+    .insert({ merchant_id: row.merchant_id, channel, external_user_id: chatId, profile_name: inbound.profileName ?? null });
+  if (error) throw new Error(`Link failed: ${error.message}`);
+  await admin.from("channel_link_codes").delete().eq("merchant_id", row.merchant_id).eq("channel", channel);
+  await admin.from("agent_threads").delete().eq("merchant_id", row.merchant_id).eq("channel", channel);
+
+  const { data: merchant } = await admin.from("merchants").select("shop_name").eq("id", row.merchant_id).single();
+  await sender.sendText(chatId, `✅ Linked to ${merchant?.shop_name ?? "your shop"}.\n\n${HELP}`);
+}
+
+/** Customer and product names bias speech recognition toward this shop's vocabulary. */
+async function shopKeyterms(admin: SupabaseClient, merchantId: string) {
+  const [customers, products] = await Promise.all([
+    admin.from("customers").select("name, aliases").eq("merchant_id", merchantId),
+    admin.from("products").select("name, aliases").eq("merchant_id", merchantId),
+  ]);
+  return [...(customers.data ?? []), ...(products.data ?? [])].flatMap((r) => [r.name as string, ...((r.aliases as string[]) ?? [])]);
+}
+
+async function customerPhone(admin: SupabaseClient, merchantId: string, name?: string) {
+  if (!name) return null;
+  const { data } = await admin.from("customers").select("phone").eq("merchant_id", merchantId).eq("name", name).limit(1).maybeSingle();
+  return data?.phone ? data.phone.replace(/\D/g, "") : null;
+}
+
+async function speakReply(sender: ChannelSender, chatId: string, text: string, languageCode: string) {
+  const apiKey = process.env.SARVAM_API_KEY;
+  if (!apiKey) return;
+  try {
+    await sender.showWorking?.(chatId, "voice");
+    const mp3 = await synthesize({
+      apiKey,
+      text,
+      languageCode,
+      codec: "mp3",
+      model: process.env.SARVAM_TTS_MODEL || undefined,
+      speaker: process.env.SARVAM_TTS_SPEAKER || undefined,
+    });
+    await sender.sendVoice(chatId, mp3);
+  } catch (error) {
+    // The text reply already went out; a missing voice reply shouldn't fail the turn.
+    console.error("[munshi] voice reply failed:", error);
+  }
+}
+
+function approvalPrompt(approval: PendingApproval) {
+  if (approval.toolName === "sendPaymentLink") {
+    const { customerName, amount } = (approval.input ?? {}) as { customerName?: string; amount?: number };
+    const what = amount ? formatINR(rupeesToPaise(amount)) : "their full balance";
+    return `🔐 Needs your OK\n\nSend ${customerName ?? "the customer"} a UPI payment link for ${what}?`;
+  }
+  return `🔐 Needs your OK: ${approval.toolName}`;
+}

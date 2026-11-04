@@ -2,7 +2,7 @@
 
 A voice-first AI bookkeeper for Indian shops. A shop owner speaks in Kannada, Hindi, Tamil or Bengali; Munshi keeps the khata, collects udhaar over UPI, manages stock, pays suppliers and handles GST. Every rupee it moves waits for the owner's "haan".
 
-> Status: **Phase 2 (voice)**. A khata agent on Sarvam-105B (Claude as fallback) records udhaar, payments, sales and stock, and sends Cashfree UPI payment links after the owner approves. Paid links update the khata through a signed webhook. The owner can tap the mic and speak in any Indian language: Saaras v4 transcribes it (biased toward the shop's customer and product names), and Bulbul speaks the reply back in the same language.
+> Status: **Phase 2 (voice)**. A khata agent on Sarvam-105B (Claude as fallback) records udhaar, payments, sales and stock, and sends Cashfree UPI payment links after the owner approves. Paid links update the khata through a signed webhook. The owner can tap the mic and speak in any Indian language: Saaras v4 transcribes it (biased toward the shop's customer and product names), and Bulbul speaks the reply back in the same language. The same agent works over **Telegram**: link the shop in one tap, then send voice notes or texts and get spoken replies, with Haan / Nahi buttons for payment links. WhatsApp shares the same channel core and switches on with Meta keys.
 
 ## How the agent works
 
@@ -41,6 +41,7 @@ npm run db:start          # starts local Supabase in Docker, applies migrations 
 npx supabase status       # copy the API URL and publishable key
 cp apps/web/.env.example apps/web/.env.local   # fill in Supabase, Sarvam, Anthropic, Cashfree sandbox keys
 npm run dev               # http://localhost:3000
+npm run telegram:dev      # optional: Telegram bot, forwards updates to the local app (no public URL needed)
 ```
 
 Demo login (local seed only): `demo@munshi.test` / `munshi-demo-123`.

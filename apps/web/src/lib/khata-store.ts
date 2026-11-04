@@ -35,13 +35,14 @@ const toProduct = (r: ProductRow): Product => ({
 });
 
 /**
- * KhataStore backed by Supabase. `db` is the signed-in user's client, so RLS scopes
- * every read and write to this merchant; only payment links use the admin client.
+ * KhataStore backed by Supabase. In the web app `db` is the signed-in user's client, so RLS
+ * also scopes every query; channels with no browser session (WhatsApp) pass the admin client.
+ * Every query filters by merchant explicitly so the store is safe with either.
  */
-export function createSupabaseKhataStore(db: SupabaseClient, merchantId: string, opts: { source: "chat" | "voice"; traceId?: string }): KhataStore {
+export function createSupabaseKhataStore(db: SupabaseClient, merchantId: string, opts: { source: "chat" | "voice" | "telegram" | "whatsapp"; traceId?: string }): KhataStore {
   const store: KhataStore = {
     async listCustomers() {
-      return must(await db.from("customers").select("id, name, aliases, phone, language").order("name"), "List customers") as CustomerRow[];
+      return must(await db.from("customers").select("id, name, aliases, phone, language").eq("merchant_id", merchantId).order("name"), "List customers") as CustomerRow[];
     },
 
     async addCustomer({ name, phone, language, aliases }) {
@@ -68,7 +69,7 @@ export function createSupabaseKhataStore(db: SupabaseClient, merchantId: string,
     },
 
     async balances(customerId) {
-      let q = db.from("customer_balances").select("customer_id, name, outstanding_paise, last_credit_at, last_payment_at");
+      let q = db.from("customer_balances").select("customer_id, name, outstanding_paise, last_credit_at, last_payment_at").eq("merchant_id", merchantId);
       if (customerId) q = q.eq("customer_id", customerId);
       const rows = must(await q, "Read balances") as { customer_id: string; name: string; outstanding_paise: number; last_credit_at: string | null; last_payment_at: string | null }[];
       return rows.map(
@@ -83,18 +84,27 @@ export function createSupabaseKhataStore(db: SupabaseClient, merchantId: string,
     },
 
     async recentEntries(limit, customerId) {
-      let q = db.from("ledger_entries").select("id, kind, amount_paise, customer_id, note, created_at").order("created_at", { ascending: false }).limit(limit);
+      let q = db
+        .from("ledger_entries")
+        .select("id, kind, amount_paise, customer_id, note, created_at")
+        .eq("merchant_id", merchantId)
+        .order("created_at", { ascending: false })
+        .limit(limit);
       if (customerId) q = q.eq("customer_id", customerId);
       return (must(await q, "Read ledger") as EntryRow[]).map(toEntry);
     },
 
     async listProducts() {
-      return (must(await db.from("products").select("id, name, aliases, unit, stock_qty, reorder_level, price_paise").order("name"), "List products") as ProductRow[]).map(toProduct);
+      return (
+        must(await db.from("products").select("id, name, aliases, unit, stock_qty, reorder_level, price_paise").eq("merchant_id", merchantId).order("name"), "List products") as ProductRow[]
+      ).map(toProduct);
     },
 
     async moveStock({ productId, delta, reason }) {
       must(await db.from("stock_movements").insert({ merchant_id: merchantId, product_id: productId, delta, reason, source: opts.source }).select("id").single(), "Move stock");
-      return toProduct(must(await db.from("products").select("id, name, aliases, unit, stock_qty, reorder_level, price_paise").eq("id", productId).single(), "Read product") as ProductRow);
+      return toProduct(
+        must(await db.from("products").select("id, name, aliases, unit, stock_qty, reorder_level, price_paise").eq("id", productId).eq("merchant_id", merchantId).single(), "Read product") as ProductRow,
+      );
     },
 
     async createPaymentLink({ customer, amountPaise, purpose }): Promise<PaymentLink> {
@@ -118,7 +128,10 @@ export function createSupabaseKhataStore(db: SupabaseClient, merchantId: string,
           .single(),
         "Record approval",
       ) as { id: string };
-      must(await db.from("approvals").update({ status: "approved", decided_at: new Date().toISOString() }).eq("id", approval.id).select("id").single(), "Approve");
+      must(
+        await db.from("approvals").update({ status: "approved", decided_at: new Date().toISOString() }).eq("id", approval.id).eq("merchant_id", merchantId).select("id").single(),
+        "Approve",
+      );
 
       const linkId = `munshi_${crypto.randomUUID().replaceAll("-", "")}`.slice(0, 50);
       const expiresAt = new Date(Date.now() + LINK_TTL_MS);
