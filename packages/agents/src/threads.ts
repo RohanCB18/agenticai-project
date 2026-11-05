@@ -51,6 +51,21 @@ export function closePendingApprovals(messages: ModelMessage[]): ModelMessage[] 
   ];
 }
 
+/**
+ * JSON outputs of one tool in these messages. Read messages rather than `steps[].toolResults`:
+ * a tool run right after an approval executes before the first step, so it isn't in `steps`.
+ */
+export function toolOutputs(messages: ModelMessage[], toolName: string): unknown[] {
+  const outputs: unknown[] = [];
+  for (const message of messages) {
+    if (message.role !== "tool") continue;
+    for (const part of message.content) {
+      if (part.type === "tool-result" && part.toolName === toolName && part.output.type === "json") outputs.push(part.output.value);
+    }
+  }
+  return outputs;
+}
+
 /** Keeps roughly the last `max` messages, always starting at an owner message so tool calls stay paired. */
 export function trimThread(messages: ModelMessage[], max = 40): ModelMessage[] {
   if (messages.length <= max) return messages;

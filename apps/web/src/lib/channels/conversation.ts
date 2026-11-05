@@ -6,6 +6,7 @@ import {
   pendingApprovals,
   SARVAM_LANGUAGE,
   synthesize,
+  toolOutputs,
   transcribe,
   trimThread,
 } from "@munshi/agents";
@@ -94,16 +95,13 @@ export async function handleInbound(inbound: Inbound, sender: ChannelSender) {
   // New payment links: make sure the owner gets the link, with a button to pass it on.
   let reply = result.text.trim();
   const buttons: LinkButton[] = [];
-  for (const step of result.steps) {
-    for (const r of step.toolResults) {
-      if (r.toolName !== "sendPaymentLink") continue;
-      const out = r.output as { status?: string; url?: string; customer?: string; amount?: string };
-      if (out.status !== "sent" || !out.url) continue;
-      if (!reply.includes(out.url)) reply += `\n\nUPI link: ${out.url}`;
-      const phone = await customerPhone(admin, merchant.id, out.customer);
-      const note = `Namaste ${out.customer ?? ""}, ${merchant.shop_name} ka ${out.amount ?? ""} baaki hai. UPI se yahan pay karein: ${out.url}`;
-      buttons.push({ text: `Send to ${out.customer ?? "customer"} on WhatsApp`, url: `https://wa.me/${phone ?? ""}?text=${encodeURIComponent(note)}` });
-    }
+  for (const output of toolOutputs(result.responseMessages, "sendPaymentLink")) {
+    const out = output as { status?: string; url?: string; customer?: string; amount?: string };
+    if (out.status !== "sent" || !out.url) continue;
+    if (!reply.includes(out.url)) reply += `\n\nUPI link: ${out.url}`;
+    const phone = await customerPhone(admin, merchant.id, out.customer);
+    const note = `Namaste ${out.customer ?? ""}, ${merchant.shop_name} ka ${out.amount ?? ""} baaki hai. UPI se yahan pay karein: ${out.url}`;
+    buttons.push({ text: `Send to ${out.customer ?? "customer"} on WhatsApp`, url: `https://wa.me/${phone ?? ""}?text=${encodeURIComponent(note)}` });
   }
 
   if (reply) {

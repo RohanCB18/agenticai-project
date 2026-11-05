@@ -44,6 +44,8 @@ npm run dev               # http://localhost:3000
 npm run telegram:dev      # optional: Telegram bot, forwards updates to the local app (no public URL needed)
 ```
 
+If calls to Telegram, Sarvam or Cashfree fail with `UNABLE_TO_VERIFY_LEAF_SIGNATURE`, an antivirus is scanning HTTPS (Avast does this) and Node doesn't trust its certificate. Don't turn verification off; tell Node to use the operating system's certificates before starting the app. In PowerShell: `$env:NODE_OPTIONS = '--use-system-ca'`.
+
 Demo login (local seed only): `demo@munshi.test` / `munshi-demo-123`.
 
 ```bash
