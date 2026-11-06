@@ -1,4 +1,4 @@
-import type { Balance, Customer, KhataStore, LedgerEntry, PaymentLink, Product } from "../store";
+import type { Balance, Customer, KhataStore, LedgerEntry, PaymentCheck, PaymentLink, PaymentQr, Product } from "../store";
 
 /** In-memory KhataStore for tests and evals. Mirrors the Supabase semantics. */
 export class MemoryStore implements KhataStore {
@@ -65,9 +65,24 @@ export class MemoryStore implements KhataStore {
   }
 
   async createPaymentLink({ amountPaise }: Parameters<KhataStore["createPaymentLink"]>[0]) {
-    const link: PaymentLink = { id: this.id("link"), url: `https://payments-test.cashfree.com/links/${this.seq}`, amountPaise, status: "ACTIVE", expiresAt: null };
+    const link: PaymentLink = { id: this.id("link"), url: `https://payments-test.cashfree.com/links/${this.seq}`, amountPaise, status: "ACTIVE", expiresAt: null, customerNotified: false };
     this.links.push(link);
     return link;
+  }
+
+  qrFails = false;
+  qrs: PaymentQr[] = [];
+  nextCheck: PaymentCheck = { paidPaise: 0, stillOpen: 0 };
+
+  async createPaymentQr({ amountPaise }: Parameters<KhataStore["createPaymentQr"]>[0]) {
+    if (this.qrFails) throw new Error("Cashfree can't issue QRs on this account");
+    const qr: PaymentQr = { id: this.id("qr"), amountPaise, expiresAt: "2026-11-06T12:00:00Z" };
+    this.qrs.push(qr);
+    return qr;
+  }
+
+  async checkPayments() {
+    return this.nextCheck;
   }
 
   async audit(action: string, details: Record<string, unknown>) {

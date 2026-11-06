@@ -11,6 +11,19 @@ const Rupees = z
   .describe("Amount in rupees, e.g. 450 or 129.50. Convert spoken numbers like 'saade chaar sau' to 450.");
 
 type Resolved = { ok: true; customer: Customer } | { ok: false; result: Record<string, unknown> };
+type Due = { ok: true; amountPaise: number } | { ok: false; result: Record<string, unknown> };
+
+/** What to collect: the requested amount, or the full balance. Never more than the customer owes. */
+async function amountDue(store: KhataStore, customer: Customer, amount?: number): Promise<Due> {
+  const [balance] = await store.balances(customer.id);
+  const outstanding = balance?.outstandingPaise ?? 0;
+  const amountPaise = amount ? rupeesToPaise(amount) : outstanding;
+  if (amountPaise <= 0) return { ok: false, result: { status: "nothing_due", customer: customer.name } };
+  if (amountPaise > outstanding) {
+    return { ok: false, result: { status: "exceeds_balance", customer: customer.name, owes: formatINR(outstanding), requested: formatINR(amountPaise) } };
+  }
+  return { ok: true, amountPaise };
+}
 
 async function resolveCustomer(store: KhataStore, name: string): Promise<Resolved> {
   const matches = rankByName(name, await store.listCustomers());
@@ -28,7 +41,7 @@ async function resolveCustomer(store: KhataStore, name: string): Promise<Resolve
   return { ok: true, customer: best.item };
 }
 
-export function createKhataTools(store: KhataStore) {
+export function createKhataTools(store: KhataStore, shopName = "your shop") {
   return {
     findCustomer: tool({
       description: "Look up customers by a spoken or typed name, including nicknames and names in Indian scripts.",
@@ -155,17 +168,62 @@ export function createKhataTools(store: KhataStore) {
         if (!r.ok) return r.result;
         if (!r.customer.phone) return { status: "missing_phone", customer: r.customer.name, hint: "Ask the owner for the customer's mobile number." };
 
-        const [balance] = await store.balances(r.customer.id);
-        const outstanding = balance?.outstandingPaise ?? 0;
-        const amountPaise = amount ? rupeesToPaise(amount) : outstanding;
-        if (amountPaise <= 0) return { status: "nothing_due", customer: r.customer.name };
-        if (amountPaise > outstanding) {
-          return { status: "exceeds_balance", customer: r.customer.name, owes: formatINR(outstanding), requested: formatINR(amountPaise) };
-        }
+        const due = await amountDue(store, r.customer, amount);
+        if (!due.ok) return due.result;
 
-        const link = await store.createPaymentLink({ customer: r.customer, amountPaise, purpose: `Udhaar payment to your shop` });
-        await store.audit("payment_link_sent", { customerId: r.customer.id, linkId: link.id, amountPaise });
-        return { status: "sent", customer: r.customer.name, amount: formatINR(amountPaise), url: link.url, expiresAt: link.expiresAt };
+        const link = await store.createPaymentLink({ customer: r.customer, amountPaise: due.amountPaise, purpose: `Udhaar payment to ${shopName}` });
+        await store.audit("payment_link_sent", { customerId: r.customer.id, linkId: link.id, amountPaise: due.amountPaise });
+        return {
+          status: "sent",
+          customer: r.customer.name,
+          amount: formatINR(due.amountPaise),
+          url: link.url,
+          expiresAt: link.expiresAt,
+          customerNotified: link.customerNotified,
+        };
+      },
+    }),
+
+    showPaymentQr: tool({
+      description:
+        "Show a UPI QR for a customer who is in the shop right now, for their udhaar. The owner shows it on their phone and the customer scans it; the payment is matched to this customer's khata. Omit amount for the full outstanding balance. For a customer who isn't in the shop, use sendPaymentLink.",
+      inputSchema: z.object({ customerName: z.string(), amount: Rupees.optional() }),
+      execute: async ({ customerName, amount }) => {
+        const r = await resolveCustomer(store, customerName);
+        if (!r.ok) return r.result;
+        const due = await amountDue(store, r.customer, amount);
+        if (!due.ok) return due.result;
+
+        try {
+          const qr = await store.createPaymentQr({ customer: r.customer, amountPaise: due.amountPaise, purpose: `Udhaar payment to ${shopName}` });
+          await store.audit("payment_qr_shown", { customerId: r.customer.id, qrId: qr.id, amountPaise: due.amountPaise });
+          return { status: "qr_ready", qrId: qr.id, customer: r.customer.name, amount: formatINR(due.amountPaise), expiresAt: qr.expiresAt };
+        } catch {
+          return { status: "qr_unavailable", customer: r.customer.name, hint: "The QR couldn't be created. Offer a payment link instead." };
+        }
+      },
+    }),
+
+    checkPayment: tool({
+      description:
+        "Check whether a customer's UPI link or QR has been paid, and update the khata if so. Use for 'X ka payment aaya?' or 'did X pay?'. Omit customerName to check everyone.",
+      inputSchema: z.object({ customerName: z.string().optional() }),
+      execute: async ({ customerName }) => {
+        let customer: Customer | undefined;
+        if (customerName) {
+          const r = await resolveCustomer(store, customerName);
+          if (!r.ok) return r.result;
+          customer = r.customer;
+        }
+        const { paidPaise, stillOpen } = await store.checkPayments(customer?.id);
+        const [balance] = customer ? await store.balances(customer.id) : [];
+        return {
+          status: paidPaise > 0 ? "payment_received" : "no_new_payment",
+          customer: customer?.name,
+          received: formatINR(paidPaise),
+          stillWaitingOn: stillOpen,
+          ...(balance ? { nowOwes: formatINR(balance.outstandingPaise) } : {}),
+        };
       },
     }),
   };

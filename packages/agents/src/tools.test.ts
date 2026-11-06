@@ -59,4 +59,49 @@ describe("khata tools", () => {
     const out = await tools.sendPaymentLink.execute!({ customerName: "Fatima" }, ctx);
     expect(out).toMatchObject({ status: "missing_phone" });
   });
+
+  it("tells the agent when the customer wasn't notified of a link", async () => {
+    await tools.recordCredit.execute!({ customerName: "Ramesh", amount: 430 }, ctx);
+    const out = await tools.sendPaymentLink.execute!({ customerName: "Ramesh" }, ctx);
+    expect(out).toMatchObject({ customerNotified: false });
+  });
+});
+
+describe("in-shop QR", () => {
+  it("defaults to the full balance and needs no phone number", async () => {
+    await tools.recordCredit.execute!({ customerName: "Fatima", amount: 230 }, ctx);
+    const out = await tools.showPaymentQr.execute!({ customerName: "Fatima" }, ctx);
+    expect(out).toMatchObject({ status: "qr_ready", customer: "Fatima", amount: "₹230" });
+    expect(store.qrs[0]?.amountPaise).toBe(23000);
+    expect(store.auditLog.at(-1)?.action).toBe("payment_qr_shown");
+  });
+
+  it("never shows a QR for more than the customer owes", async () => {
+    await tools.recordCredit.execute!({ customerName: "Fatima", amount: 100 }, ctx);
+    const out = await tools.showPaymentQr.execute!({ customerName: "Fatima", amount: 500 }, ctx);
+    expect(out).toMatchObject({ status: "exceeds_balance" });
+    expect(store.qrs).toHaveLength(0);
+  });
+
+  it("offers a way out when Cashfree can't issue a QR", async () => {
+    await tools.recordCredit.execute!({ customerName: "Fatima", amount: 100 }, ctx);
+    store.qrFails = true;
+    const out = await tools.showPaymentQr.execute!({ customerName: "Fatima" }, ctx);
+    expect(out).toMatchObject({ status: "qr_unavailable" });
+  });
+});
+
+describe("checkPayment", () => {
+  it("reports a received payment with the new balance", async () => {
+    await tools.recordCredit.execute!({ customerName: "Fatima", amount: 500 }, ctx);
+    store.nextCheck = { paidPaise: 20000, stillOpen: 0 };
+    const out = await tools.checkPayment.execute!({ customerName: "Fatima" }, ctx);
+    expect(out).toMatchObject({ status: "payment_received", customer: "Fatima", received: "₹200", nowOwes: "₹500" });
+  });
+
+  it("says so when nothing new arrived, with or without a name", async () => {
+    store.nextCheck = { paidPaise: 0, stillOpen: 2 };
+    const out = await tools.checkPayment.execute!({}, ctx);
+    expect(out).toMatchObject({ status: "no_new_payment", stillWaitingOn: 2 });
+  });
 });

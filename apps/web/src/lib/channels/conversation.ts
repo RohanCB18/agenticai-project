@@ -104,6 +104,14 @@ export async function handleInbound(inbound: Inbound, sender: ChannelSender) {
     buttons.push({ text: `Send to ${out.customer ?? "customer"} on WhatsApp`, url: `https://wa.me/${phone ?? ""}?text=${encodeURIComponent(note)}` });
   }
 
+  // In-shop QRs go out as an image, before the reply, so the customer can scan straight away.
+  for (const output of toolOutputs(result.responseMessages, "showPaymentQr")) {
+    const out = output as { status?: string; qrId?: string; customer?: string; amount?: string };
+    if (out.status !== "qr_ready" || !out.qrId) continue;
+    const { data: qr } = await admin.from("payment_qrs").select("qr_png").eq("id", out.qrId).eq("merchant_id", merchant.id).single();
+    if (qr) await sender.sendPhoto(chatId, Uint8Array.from(Buffer.from(qr.qr_png, "base64")), `${out.customer ?? "Customer"}: ${out.amount ?? ""}. Scan with any UPI app.`);
+  }
+
   if (reply) {
     await sender.sendText(chatId, reply, buttons);
     if (replyLanguage) await speakReply(sender, chatId, reply, replyLanguage);

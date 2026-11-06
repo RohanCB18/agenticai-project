@@ -139,6 +139,14 @@ export const telegramSender: ChannelSender = {
     await call("sendVoice", form);
   },
 
+  async sendPhoto(chatId, png, caption) {
+    const form = new FormData();
+    form.append("chat_id", chatId);
+    form.append("caption", caption.slice(0, 1024));
+    form.append("photo", new Blob([png as Uint8Array<ArrayBuffer>], { type: "image/png" }), "munshi-qr.png");
+    await call("sendPhoto", form);
+  },
+
   async sendApproval(chatId, prompt, approvalId) {
     await call("sendMessage", {
       chat_id: chatId,

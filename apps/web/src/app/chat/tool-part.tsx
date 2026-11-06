@@ -7,6 +7,8 @@ type Decide = (response: { id: string; approved: boolean; reason?: string }) => 
 
 const LABELS: Record<string, string> = {
   findCustomer: "Looking up customer",
+  showPaymentQr: "UPI QR",
+  checkPayment: "Payment check",
   addCustomer: "Adding customer",
   recordCredit: "Udhaar recorded",
   recordPayment: "Payment recorded",
@@ -99,6 +101,22 @@ function Output({ name, out }: { name: string; out: Record<string, unknown> }) {
         ))}
       </div>
     );
+  }
+
+  if (name === "showPaymentQr" && out.status === "qr_ready") {
+    return (
+      <div className="flex flex-col items-center gap-2">
+        {/* eslint-disable-next-line @next/next/no-img-element -- a small private QR, not a page image */}
+        <img src={`/api/payments/qr/${String(out.qrId)}`} alt={`UPI QR for ${String(out.amount)}`} width={220} height={220} className="rounded-md bg-white p-2" />
+        <p>
+          {String(out.customer)}: {String(out.amount)}
+        </p>
+      </div>
+    );
+  }
+
+  if (name === "checkPayment" && typeof out.received === "string") {
+    return <p>{out.status === "payment_received" ? `${out.received} received` : "No new payment yet"}</p>;
   }
 
   if (name === "findCustomer" && Array.isArray(out.matches)) {

@@ -29,6 +29,8 @@ export interface ChannelSender {
   sendText(chatId: string, text: string, buttons?: LinkButton[]): Promise<void>;
   /** Sends an MP3 voice reply. */
   sendVoice(chatId: string, mp3: Uint8Array): Promise<void>;
+  /** Sends a PNG, used for the in-shop payment QR. */
+  sendPhoto(chatId: string, png: Uint8Array, caption: string): Promise<void>;
   /** Sends Haan / Nahi buttons that come back as a "decision" inbound for `approvalId`. */
   sendApproval(chatId: string, prompt: string, approvalId: string): Promise<void>;
   /** Optional "typing…" / "recording voice…" indicator while Munshi works. */

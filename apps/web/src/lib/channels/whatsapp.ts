@@ -148,6 +148,11 @@ export const whatsappSender: ChannelSender = {
     await send(to, { type: "audio", audio: { id } });
   },
 
+  async sendPhoto(to, png, caption) {
+    const id = await uploadMedia(png, "image/png", "munshi-qr.png");
+    await send(to, { type: "image", image: { id, caption: caption.slice(0, 1024) } });
+  },
+
   async sendApproval(to, prompt, approvalId) {
     await send(to, {
       type: "interactive",

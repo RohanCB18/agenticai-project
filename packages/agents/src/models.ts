@@ -1,6 +1,7 @@
 import { createAnthropic } from "@ai-sdk/anthropic";
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 import type { LanguageModelV4 } from "@ai-sdk/provider";
+import { simulateStreamingMiddleware, wrapLanguageModel } from "ai";
 
 export const SARVAM_MODEL = "sarvam-105b";
 export const DEFAULT_FALLBACK_MODEL = "claude-opus-5-5";
@@ -26,7 +27,24 @@ export function sarvamModel(apiKey: string): LanguageModelV4 {
       max_tokens: body.max_tokens ?? 4096,
     }),
   });
-  return sarvam.chatModel(SARVAM_MODEL);
+  return unstreamForcedToolCalls(sarvam.chatModel(SARVAM_MODEL));
+}
+
+/**
+ * When a tool call is forced while streaming, Sarvam sends it back as raw text
+ * ("<tool_call>showPaymentQr...") instead of a tool call, so nothing runs. Those steps call
+ * the API without streaming and replay the result as a stream; everything else streams normally.
+ */
+export function unstreamForcedToolCalls(model: LanguageModelV4): LanguageModelV4 {
+  const unstreamed = wrapLanguageModel({ model, middleware: simulateStreamingMiddleware() });
+  return {
+    specificationVersion: "v4",
+    provider: model.provider,
+    modelId: model.modelId,
+    supportedUrls: model.supportedUrls,
+    doGenerate: (options) => model.doGenerate(options),
+    doStream: (options) => (options.toolChoice?.type === "required" ? unstreamed.doStream(options) : model.doStream(options)),
+  };
 }
 
 export function claudeModel(apiKey: string, modelId = DEFAULT_FALLBACK_MODEL): LanguageModelV4 {

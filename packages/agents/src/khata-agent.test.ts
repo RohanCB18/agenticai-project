@@ -1,8 +1,8 @@
 import type { LanguageModelV4GenerateResult } from "@ai-sdk/provider";
 import { MockLanguageModelV4 } from "ai/test";
 import { describe, expect, it } from "vitest";
-import { createKhataAgent } from "./khata-agent";
-import { withFallback } from "./models";
+import { asksForQr, createKhataAgent } from "./khata-agent";
+import { unstreamForcedToolCalls, withFallback } from "./models";
 import { MemoryStore } from "./testing/memory-store";
 
 const usage = {
@@ -34,6 +34,58 @@ async function seededStore() {
   await store.addCustomer({ name: "Ramesh", phone: "+919800000001" });
   return store;
 }
+
+describe("QR requests", () => {
+  it("recognises QR in the scripts speech-to-text uses", () => {
+    for (const text of ["Anand ka QR dikhao", "आनंद का क्यूआर दिखाओ", "ಆನಂದ್ ಕ್ಯೂಆರ್ ತೋರಿಸು", "show the qr"]) {
+      expect(asksForQr([{ role: "user", content: text }])).toBe(true);
+    }
+    expect(asksForQr([{ role: "user", content: "Ramesh ne 200 diye" }])).toBe(false);
+    expect(asksForQr([{ role: "assistant", content: "QR ready" }])).toBe(false);
+  });
+
+  it("forces the QR tool on the first step only, so the model can't claim one it didn't make", async () => {
+    const store = await seededStore();
+    await store.addLedgerEntry({ kind: "credit_given", amountPaise: 9500, customerId: store.customers[0]!.id });
+    const seen: { toolChoice: unknown; tools: string[] }[] = [];
+    const steps = [toolCall("showPaymentQr", { customerName: "Ramesh" }), text("QR ready hai")];
+    const model = new MockLanguageModelV4({
+      doGenerate: async (options) => {
+        seen.push({ toolChoice: options.toolChoice, tools: (options.tools ?? []).map((t) => t.name) });
+        return steps[seen.length - 1]!;
+      },
+    });
+
+    const agent = createKhataAgent({ model, store, shopName: "Test", language: "hi" });
+    await agent.generate({ messages: [{ role: "user", content: "Ramesh ka QR dikhao" }] });
+
+    expect(seen[0]).toEqual({ toolChoice: { type: "required" }, tools: ["showPaymentQr"] });
+    expect(seen[1]?.toolChoice).not.toEqual({ type: "required" });
+    expect(seen[1]?.tools.length).toBeGreaterThan(1);
+    expect(store.qrs).toHaveLength(1);
+  });
+
+  it("runs forced steps without streaming and streams the rest", async () => {
+    const calls: string[] = [];
+    const model = unstreamForcedToolCalls(
+      new MockLanguageModelV4({
+        doGenerate: async () => {
+          calls.push("generate");
+          return text("ok");
+        },
+        doStream: async () => {
+          calls.push("stream");
+          return { stream: new ReadableStream() };
+        },
+      }),
+    );
+    const prompt = [{ role: "user" as const, content: [{ type: "text" as const, text: "hi" }] }];
+
+    await model.doStream({ prompt, toolChoice: { type: "required" } });
+    await model.doStream({ prompt, toolChoice: { type: "auto" } });
+    expect(calls).toEqual(["generate", "stream"]);
+  });
+});
 
 describe("khata agent loop", () => {
   it("calls recordCredit and then answers", async () => {

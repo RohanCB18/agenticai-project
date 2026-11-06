@@ -13,12 +13,25 @@ export class CashfreeNotConfiguredError extends Error {
   }
 }
 
+const isProduction = () => process.env.CASHFREE_ENV === "production";
+
 function config() {
   const clientId = process.env.CASHFREE_CLIENT_ID;
   const clientSecret = process.env.CASHFREE_CLIENT_SECRET;
   if (!clientId || !clientSecret) throw new CashfreeNotConfiguredError();
-  const baseUrl = process.env.CASHFREE_ENV === "production" ? "https://api.cashfree.com/pg" : "https://sandbox.cashfree.com/pg";
-  return { clientId, clientSecret, baseUrl };
+  const baseUrl = isProduction() ? "https://api.cashfree.com/pg" : "https://sandbox.cashfree.com/pg";
+  const headers = { "content-type": "application/json", "x-client-id": clientId, "x-client-secret": clientSecret, "x-api-version": API_VERSION };
+  return { baseUrl, headers };
+}
+
+/** Cashfree only delivers link SMS in production; in sandbox the customer hears nothing. */
+export const cashfreeSendsSms = isProduction;
+
+async function request<T>(what: string, path: string, init: RequestInit = {}): Promise<T> {
+  const { baseUrl, headers } = config();
+  const res = await fetch(`${baseUrl}${path}`, { ...init, headers: { ...headers, ...init.headers } });
+  if (!res.ok) throw new Error(`Cashfree ${what} failed (${res.status}): ${(await res.text()).slice(0, 300)}`);
+  return (await res.json()) as T;
 }
 
 export type CreateLinkInput = {
@@ -46,36 +59,77 @@ function tenDigit(phone: string) {
   return phone.replace(/\D/g, "").slice(-10);
 }
 
-export async function createPaymentLink(input: CreateLinkInput): Promise<CashfreeLink> {
-  const { clientId, clientSecret, baseUrl } = config();
-  const res = await fetch(`${baseUrl}/links`, {
+export function createPaymentLink(input: CreateLinkInput): Promise<CashfreeLink> {
+  return request<CashfreeLink>("create link", "/links", {
     method: "POST",
-    headers: {
-      "content-type": "application/json",
-      "x-client-id": clientId,
-      "x-client-secret": clientSecret,
-      "x-api-version": API_VERSION,
-      // Same key on retry means Cashfree won't create a duplicate link.
-      "x-idempotency-key": input.linkId,
-    },
+    // Same key on retry means Cashfree won't create a duplicate link.
+    headers: { "x-idempotency-key": input.linkId },
     body: JSON.stringify({
       link_id: input.linkId,
       link_amount: input.amountPaise / 100,
       link_currency: "INR",
       link_purpose: input.purpose.slice(0, 500),
       customer_details: { customer_name: input.customer.name, customer_phone: tenDigit(input.customer.phone) },
-      link_notify: { send_sms: true, send_email: false },
+      link_notify: { send_sms: cashfreeSendsSms(), send_email: false },
       link_expiry_time: input.expiresAt.toISOString(),
       link_meta: { upi_intent: true, payment_methods: "upi", ...(input.notifyUrl ? { notify_url: input.notifyUrl } : {}) },
       link_notes: input.notes,
     }),
   });
+}
 
-  if (!res.ok) {
-    const body = await res.text();
-    throw new Error(`Cashfree create link failed (${res.status}): ${body.slice(0, 300)}`);
-  }
-  return (await res.json()) as CashfreeLink;
+export type CreateQrInput = {
+  orderId: string;
+  amountPaise: number;
+  customer: { id: string; name: string; phone: string | null };
+  expiresAt: Date;
+  notifyUrl?: string;
+  note: string;
+};
+
+/**
+ * An exact-amount UPI QR: creates an order, then asks Order Pay for a QR. Returns the PNG as
+ * base64. Order Pay works in sandbox, but in production Cashfree only enables it (the "S2S"
+ * flag) for accounts showing over Rs 1 crore annual turnover, so callers must handle failure.
+ */
+export async function createUpiQr(input: CreateQrInput): Promise<{ qrPng: string }> {
+  const order = await request<{ payment_session_id: string }>("create order", "/orders", {
+    method: "POST",
+    headers: { "x-idempotency-key": input.orderId },
+    body: JSON.stringify({
+      order_id: input.orderId,
+      order_amount: input.amountPaise / 100,
+      order_currency: "INR",
+      customer_details: {
+        customer_id: input.customer.id,
+        customer_name: input.customer.name,
+        // Orders require a phone; a walk-in customer may not have one on file.
+        customer_phone: input.customer.phone ? tenDigit(input.customer.phone) : "9999999999",
+      },
+      order_expiry_time: input.expiresAt.toISOString(),
+      order_note: input.note.slice(0, 200),
+      ...(input.notifyUrl ? { order_meta: { notify_url: input.notifyUrl } } : {}),
+    }),
+  });
+
+  const payment = await request<{ data?: { payload?: { qrcode?: string } } }>("create QR", "/orders/sessions", {
+    method: "POST",
+    // NPCI needs the customer's device details; the customer scans with their own phone, so these are generic.
+    headers: { "x-client-device": "desktop", "x-client-os": "others", "x-client-browser": "others" },
+    body: JSON.stringify({ payment_session_id: order.payment_session_id, payment_method: { upi: { channel: "qrcode" } } }),
+  });
+  const qrcode = payment.data?.payload?.qrcode;
+  if (!qrcode) throw new Error("Cashfree returned no QR code");
+  return { qrPng: qrcode.replace(/^data:image\/png;base64,/, "") };
+}
+
+/** Live status, for checking a payment without waiting for a webhook. */
+export function getOrder(orderId: string) {
+  return request<{ order_status: string; order_amount: number }>("get order", `/orders/${encodeURIComponent(orderId)}`);
+}
+
+export function getLink(linkId: string) {
+  return request<{ link_status: keyof typeof LINK_STATUS; link_amount_paid: number }>("get link", `/links/${encodeURIComponent(linkId)}`);
 }
 
 /**
@@ -97,3 +151,32 @@ export const LINK_STATUS = {
   EXPIRED: "expired",
   CANCELLED: "cancelled",
 } as const;
+
+export type LinkStatus = (typeof LINK_STATUS)[keyof typeof LINK_STATUS];
+
+export type CashfreeEvent =
+  | { kind: "link"; linkId: string; status: LinkStatus; paidPaise: number }
+  | { kind: "order"; orderId: string; paidPaise: number };
+
+/** Reads the two webhooks Munshi uses (payment links, order payments); null for anything else. */
+export function parseCashfreeEvent(raw: string): CashfreeEvent | null {
+  const event = JSON.parse(raw) as {
+    type?: string;
+    data?: {
+      link_id?: string;
+      link_status?: keyof typeof LINK_STATUS;
+      link_amount_paid?: string | number;
+      order?: { order_id?: string };
+      payment?: { payment_status?: string; payment_amount?: string | number };
+    };
+  };
+  const toPaise = (rupees: string | number | undefined) => Math.round(Number(rupees ?? 0) * 100);
+
+  if (event.type === "PAYMENT_LINK_EVENT" && event.data?.link_id && event.data.link_status && LINK_STATUS[event.data.link_status]) {
+    return { kind: "link", linkId: event.data.link_id, status: LINK_STATUS[event.data.link_status], paidPaise: toPaise(event.data.link_amount_paid) };
+  }
+  if (event.type === "PAYMENT_SUCCESS_WEBHOOK" && event.data?.order?.order_id && event.data.payment?.payment_status === "SUCCESS") {
+    return { kind: "order", orderId: event.data.order.order_id, paidPaise: toPaise(event.data.payment.payment_amount) };
+  }
+  return null;
+}

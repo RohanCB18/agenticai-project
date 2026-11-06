@@ -2,7 +2,7 @@
 
 A voice-first AI bookkeeper for Indian shops. A shop owner speaks in Kannada, Hindi, Tamil or Bengali; Munshi keeps the khata, collects udhaar over UPI, manages stock, pays suppliers and handles GST. Every rupee it moves waits for the owner's "haan".
 
-> Status: **Phase 2 (voice)**. A khata agent on Sarvam-105B (Claude as fallback) records udhaar, payments, sales and stock, and sends Cashfree UPI payment links after the owner approves. Paid links update the khata through a signed webhook. The owner can tap the mic and speak in any Indian language: Saaras v4 transcribes it (biased toward the shop's customer and product names), and Bulbul speaks the reply back in the same language. The same agent works over **Telegram**: link the shop in one tap, then send voice notes or texts and get spoken replies, with Haan / Nahi buttons for payment links. WhatsApp shares the same channel core and switches on with Meta keys.
+> Status: **Phase 2 (voice)**. A khata agent on Sarvam-105B (Claude as fallback) records udhaar, payments, sales and stock, and sends Cashfree UPI payment links after the owner approves. Paid links update the khata through a signed webhook. The owner can tap the mic and speak in any Indian language: Saaras v4 transcribes it (biased toward the shop's customer and product names), and Bulbul speaks the reply back in the same language. The same agent works over **Telegram**: link the shop in one tap, then send voice notes or texts and get spoken replies, with Haan / Nahi buttons for payment links. WhatsApp shares the same channel core and switches on with Meta keys. For a customer at the counter, Munshi shows an exact-amount UPI QR tied to their khata, so the payment lands on the right account by itself.
 
 ## How the agent works
 
@@ -53,6 +53,19 @@ npx supabase test db      # RLS tests: one shop can never see another's books
 npx turbo run typecheck lint test
 uv sync --all-packages && uv run pytest -q
 ```
+
+## Collecting money
+
+| Situation | Tool | How it's confirmed |
+|---|---|---|
+| Customer isn't in the shop | `sendPaymentLink` (owner approves first) | Cashfree webhook, or `checkPayment` |
+| Customer is at the counter | `showPaymentQr` (shown only to the owner) | Cashfree webhook, or `checkPayment` |
+
+Webhook and `checkPayment` share one settlement path, so a payment reported twice is recorded once. Webhooks need a public https URL in `PUBLIC_APP_URL`; `checkPayment` ("Ramesh ka payment aaya?") works without one.
+
+**QR limit:** the QR uses Cashfree's Order Pay API. It works in sandbox, but in production Cashfree only enables it for accounts showing over Rs 1 crore annual turnover. Without that, `showPaymentQr` reports `qr_unavailable` and Munshi offers a payment link instead.
+
+**Sarvam quirk:** when a tool call is forced while streaming, Sarvam returns it as raw text, so `sarvamModel` runs forced steps without streaming. QR requests are forced in code because the model once claimed a QR was ready without creating one.
 
 ## Design rules
 

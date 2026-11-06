@@ -1,8 +1,10 @@
 -- Run with `npx supabase test db`. Owners can't claim a chat account or see link codes.
 begin;
-select plan(5);
+select plan(6);
 
 -- Server-side setup (as postgres): the demo merchant has linked Telegram and holds a code.
+-- Clears any link from local testing first; the whole file rolls back at the end.
+delete from public.channel_links;
 insert into public.channel_links (merchant_id, channel, external_user_id)
   select id, 'telegram', '700000001' from public.merchants where owner_id = '11111111-1111-1111-1111-111111111111';
 insert into public.channel_link_codes (code, merchant_id, channel, expires_at)
@@ -20,6 +22,10 @@ select throws_ok(
   '42501', null, 'owners cannot link a chat account without proving they own it');
 select is((select count(*)::int from public.channel_links), 0, 'cannot see another shop''s linked account');
 select is((select count(*)::int from public.channel_link_codes), 0, 'link codes are invisible to owners');
+select throws_ok(
+  $$ insert into public.payment_qrs (merchant_id, cashfree_order_id, amount_paise, qr_png, expires_at)
+     values ((select id from public.merchants limit 1), 'forged', 100, 'x', now()) $$,
+  '42501', null, 'owners cannot forge a payment QR');
 
 set local request.jwt.claims = '{"sub":"11111111-1111-1111-1111-111111111111","role":"authenticated"}';
 select is((select external_user_id from public.channel_links where channel = 'telegram'), '700000001', 'owner sees own linked account');

@@ -1,10 +1,12 @@
 import "server-only";
 import type { Balance, Customer, KhataStore, LedgerEntry, PaymentLink, Product } from "@munshi/agents";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { createPaymentLink as createCashfreeLink } from "@/lib/cashfree";
+import { cashfreeSendsSms, createPaymentLink as createCashfreeLink, createUpiQr } from "@/lib/cashfree";
+import { reconcilePayments } from "@/lib/payments";
 import { createAdminClient } from "@/lib/supabase/admin";
 
 const LINK_TTL_MS = 3 * 24 * 60 * 60 * 1000; // udhaar links stay valid for 3 days
+const QR_TTL_MS = 20 * 60 * 1000; // a counter QR only needs to last while the customer is there
 
 function must<T>(result: { data: T | null; error: { message: string } | null }, what: string): T {
   if (result.error || result.data === null) throw new Error(`${what} failed: ${result.error?.message ?? "no data"}`);
@@ -175,7 +177,44 @@ export function createSupabaseKhataStore(db: SupabaseClient, merchantId: string,
       ) as { id: string };
       await admin.from("approvals").update({ status: "executed" }).eq("id", approval.id);
 
-      return { id: row.id, url: link.link_url, amountPaise, status: link.link_status, expiresAt: expiresAt.toISOString() };
+      return { id: row.id, url: link.link_url, amountPaise, status: link.link_status, expiresAt: expiresAt.toISOString(), customerNotified: cashfreeSendsSms() };
+    },
+
+    async createPaymentQr({ customer, amountPaise, purpose }) {
+      const orderId = `munshi_qr_${crypto.randomUUID().replaceAll("-", "")}`.slice(0, 45);
+      const expiresAt = new Date(Date.now() + QR_TTL_MS);
+      const appUrl = process.env.PUBLIC_APP_URL;
+      const { qrPng } = await createUpiQr({
+        orderId,
+        amountPaise,
+        customer,
+        expiresAt,
+        note: purpose,
+        notifyUrl: appUrl?.startsWith("https://") ? `${appUrl}/api/webhooks/cashfree` : undefined,
+      });
+
+      // QR rows are server-written only (RLS gives owners read access).
+      const row = must(
+        await createAdminClient()
+          .from("payment_qrs")
+          .insert({
+            merchant_id: merchantId,
+            customer_id: customer.id,
+            cashfree_order_id: orderId,
+            amount_paise: amountPaise,
+            qr_png: qrPng,
+            expires_at: expiresAt.toISOString(),
+          })
+          .select("id")
+          .single(),
+        "Save payment QR",
+      ) as { id: string };
+      return { id: row.id, amountPaise, expiresAt: expiresAt.toISOString() };
+    },
+
+    async checkPayments(customerId) {
+      // Payment tables are server-written only, so this needs the admin client in every channel.
+      return reconcilePayments(createAdminClient(), merchantId, customerId);
     },
 
     async audit(action, details) {

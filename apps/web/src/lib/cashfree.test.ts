@@ -1,6 +1,25 @@
 import { createHmac } from "node:crypto";
 import { describe, expect, it } from "vitest";
-import { verifyWebhookSignature } from "./cashfree";
+import { parseCashfreeEvent, verifyWebhookSignature } from "./cashfree";
+
+describe("Cashfree events", () => {
+  it("reads a paid link", () => {
+    const raw = '{"type":"PAYMENT_LINK_EVENT","data":{"link_id":"munshi_abc","link_status":"PAID","link_amount_paid":"450.00"}}';
+    expect(parseCashfreeEvent(raw)).toEqual({ kind: "link", linkId: "munshi_abc", status: "paid", paidPaise: 45000 });
+  });
+
+  it("reads a successful order payment in the documented format", () => {
+    const raw =
+      '{"data":{"order":{"order_id":"munshi_qr_1","order_amount":230},"payment":{"cf_payment_id":"1","payment_status":"SUCCESS","payment_amount":230}},"type":"PAYMENT_SUCCESS_WEBHOOK"}';
+    expect(parseCashfreeEvent(raw)).toEqual({ kind: "order", orderId: "munshi_qr_1", paidPaise: 23000 });
+  });
+
+  it("ignores failed payments and other events", () => {
+    expect(parseCashfreeEvent('{"type":"PAYMENT_FAILED_WEBHOOK","data":{"order":{"order_id":"x"},"payment":{"payment_status":"FAILED"}}}')).toBeNull();
+    expect(parseCashfreeEvent('{"type":"PAYMENT_SUCCESS_WEBHOOK","data":{"order":{"order_id":"x"},"payment":{"payment_status":"PENDING"}}}')).toBeNull();
+    expect(parseCashfreeEvent('{"type":"REFUND_STATUS_WEBHOOK","data":{}}')).toBeNull();
+  });
+});
 
 const secret = "test_secret";
 // Raw body as Cashfree sends it. Note "450.00": re-serialising would turn it into 450.
