@@ -71,7 +71,7 @@ describe("in-shop QR", () => {
   it("defaults to the full balance and needs no phone number", async () => {
     await tools.recordCredit.execute!({ customerName: "Fatima", amount: 230 }, ctx);
     const out = await tools.showPaymentQr.execute!({ customerName: "Fatima" }, ctx);
-    expect(out).toMatchObject({ status: "qr_ready", customer: "Fatima", amount: "₹230" });
+    expect(out).toMatchObject({ status: "qr_ready", customer: "Fatima", amount: "₹230", validForMinutes: 20 });
     expect(store.qrs[0]?.amountPaise).toBe(23000);
     expect(store.auditLog.at(-1)?.action).toBe("payment_qr_shown");
   });

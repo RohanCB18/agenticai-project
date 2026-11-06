@@ -1,7 +1,7 @@
 import "server-only";
 import { formatINR } from "@munshi/db";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { getLink, getOrder, LINK_STATUS, type LinkStatus } from "@/lib/cashfree";
+import { cancelLink, getLink, getOrder, LINK_STATUS, type LinkStatus, terminateOrder } from "@/lib/cashfree";
 import { telegramSender } from "@/lib/channels/telegram";
 import type { MessagingChannel } from "@/lib/channels/types";
 import { whatsappSender } from "@/lib/channels/whatsapp";
@@ -15,6 +15,7 @@ type PaymentTable = "payment_links" | "payment_qrs";
 type PaymentRow = { id: string; merchant_id: string; customer_id: string | null; amount_paid_paise: number | string };
 
 const LABEL: Record<PaymentTable, string> = { payment_links: "payment link", payment_qrs: "in-shop QR" };
+const OPEN_STATUSES = ["active", "partially_paid"];
 
 /**
  * Records `paidPaise` as the total paid so far on a link or QR. Returns the newly paid amount
@@ -49,7 +50,46 @@ export async function settlePayment(db: SupabaseClient, table: PaymentTable, row
     action: table === "payment_links" ? "payment_link_paid" : "payment_qr_paid",
     details: { id: row.id, newlyPaid, status },
   });
+  await cancelOpenRequests(db, row.merchant_id, row.customer_id, row.id);
   return newlyPaid;
+}
+
+/**
+ * Closes a customer's open links and QRs, because their amounts no longer match the balance:
+ * without this, paying an old request as well would overpay and push the khata negative.
+ * If Cashfree refuses (say the link was paid a moment ago) the row stays open, so the
+ * webhook or a payment check can still record that payment.
+ */
+export async function cancelOpenRequests(db: SupabaseClient, merchantId: string, customerId: string, exceptId?: string) {
+  const open = (table: PaymentTable, columns: string) =>
+    db.from(table).select(columns).eq("merchant_id", merchantId).eq("customer_id", customerId).in("status", OPEN_STATUSES);
+  const [{ data: links }, { data: qrs }] = await Promise.all([
+    open("payment_links", "id, cashfree_link_id, expires_at"),
+    open("payment_qrs", "id, cashfree_order_id, expires_at"),
+  ]);
+
+  const close = async (table: PaymentTable, row: { id: string; expires_at: string | null }, cancel: () => Promise<unknown>) => {
+    if (row.id === exceptId) return;
+    const setStatus = (status: LinkStatus) =>
+      // Only from an open status, so a payment recorded in the meantime is never overwritten.
+      db.from(table).update({ status, updated_at: new Date().toISOString() }).eq("id", row.id).in("status", OPEN_STATUSES);
+
+    // Cashfree refuses to cancel what has already expired, so close those here.
+    if (row.expires_at && new Date(row.expires_at) < new Date()) return void (await setStatus("expired"));
+    try {
+      await cancel();
+      await setStatus("cancelled");
+    } catch (error) {
+      console.warn(`[munshi] couldn't cancel ${LABEL[table]} ${row.id}:`, error instanceof Error ? error.message : error);
+    }
+  };
+
+  for (const row of (links ?? []) as unknown as { id: string; cashfree_link_id: string; expires_at: string | null }[]) {
+    await close("payment_links", row, () => cancelLink(row.cashfree_link_id));
+  }
+  for (const row of (qrs ?? []) as unknown as { id: string; cashfree_order_id: string; expires_at: string | null }[]) {
+    await close("payment_qrs", row, () => terminateOrder(row.cashfree_order_id));
+  }
 }
 
 /** Tells the owner on their linked chat apps that money arrived. A failed notice never fails the payment. */
@@ -74,7 +114,7 @@ export async function notifyOwnerOfPayment(db: SupabaseClient, merchantId: strin
  */
 export async function reconcilePayments(db: SupabaseClient, merchantId: string, customerId?: string) {
   const open = (table: PaymentTable, columns: string) => {
-    let q = db.from(table).select(columns).eq("merchant_id", merchantId).in("status", ["active", "partially_paid"]);
+    let q = db.from(table).select(columns).eq("merchant_id", merchantId).in("status", OPEN_STATUSES);
     if (customerId) q = q.eq("customer_id", customerId);
     return q;
   };
@@ -97,7 +137,10 @@ export async function reconcilePayments(db: SupabaseClient, merchantId: string, 
     const order = await getOrder(row.cashfree_order_id);
     if (order.order_status === "PAID") paidPaise += await settlePayment(db, "payment_qrs", row, Number(row.amount_paise), "paid");
     else if (order.order_status === "ACTIVE") stillOpen++;
-    else await db.from("payment_qrs").update({ status: "expired", updated_at: new Date().toISOString() }).eq("id", row.id);
+    else {
+      const status = order.order_status === "EXPIRED" ? "expired" : "cancelled";
+      await db.from("payment_qrs").update({ status, updated_at: new Date().toISOString() }).eq("id", row.id).in("status", OPEN_STATUSES);
+    }
   }
 
   return { paidPaise, stillOpen };

@@ -2,7 +2,7 @@ import "server-only";
 import type { Balance, Customer, KhataStore, LedgerEntry, PaymentLink, Product } from "@munshi/agents";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { cashfreeSendsSms, createPaymentLink as createCashfreeLink, createUpiQr } from "@/lib/cashfree";
-import { reconcilePayments } from "@/lib/payments";
+import { cancelOpenRequests, reconcilePayments } from "@/lib/payments";
 import { createAdminClient } from "@/lib/supabase/admin";
 
 const LINK_TTL_MS = 3 * 24 * 60 * 60 * 1000; // udhaar links stay valid for 3 days
@@ -42,6 +42,15 @@ const toProduct = (r: ProductRow): Product => ({
  * Every query filters by merchant explicitly so the store is safe with either.
  */
 export function createSupabaseKhataStore(db: SupabaseClient, merchantId: string, opts: { source: "chat" | "voice" | "telegram" | "whatsapp"; traceId?: string }): KhataStore {
+  /** A failed cancel is logged, never fatal: the entry or new request matters more. */
+  async function closeOpenRequests(customerId: string) {
+    try {
+      await cancelOpenRequests(createAdminClient(), merchantId, customerId);
+    } catch (error) {
+      console.warn("[munshi] couldn't close open payment requests:", error instanceof Error ? error.message : error);
+    }
+  }
+
   const store: KhataStore = {
     async listCustomers() {
       return must(await db.from("customers").select("id, name, aliases, phone, language").eq("merchant_id", merchantId).order("name"), "List customers") as CustomerRow[];
@@ -67,6 +76,8 @@ export function createSupabaseKhataStore(db: SupabaseClient, merchantId: string,
           .single(),
         "Add ledger entry",
       ) as EntryRow;
+      // The balance changed, so any open link or QR now asks for the wrong amount.
+      if (customerId && (kind === "credit_given" || kind === "payment_received")) await closeOpenRequests(customerId);
       return toEntry(row);
     },
 
@@ -135,6 +146,7 @@ export function createSupabaseKhataStore(db: SupabaseClient, merchantId: string,
         "Approve",
       );
 
+      await closeOpenRequests(customer.id); // one open request per customer, so nobody can pay twice
       const linkId = `munshi_${crypto.randomUUID().replaceAll("-", "")}`.slice(0, 50);
       const expiresAt = new Date(Date.now() + LINK_TTL_MS);
       const appUrl = process.env.PUBLIC_APP_URL;
@@ -181,6 +193,7 @@ export function createSupabaseKhataStore(db: SupabaseClient, merchantId: string,
     },
 
     async createPaymentQr({ customer, amountPaise, purpose }) {
+      await closeOpenRequests(customer.id); // one open request per customer, so nobody can pay twice
       const orderId = `munshi_qr_${crypto.randomUUID().replaceAll("-", "")}`.slice(0, 45);
       const expiresAt = new Date(Date.now() + QR_TTL_MS);
       const appUrl = process.env.PUBLIC_APP_URL;

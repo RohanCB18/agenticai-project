@@ -132,6 +132,16 @@ export function getLink(linkId: string) {
   return request<{ link_status: keyof typeof LINK_STATUS; link_amount_paid: number }>("get link", `/links/${encodeURIComponent(linkId)}`);
 }
 
+/** Fails with link_not_active if the link was already paid, cancelled or expired. */
+export function cancelLink(linkId: string) {
+  return request("cancel link", `/links/${encodeURIComponent(linkId)}/cancel`, { method: "POST" });
+}
+
+/** Ending an order is asynchronous: Cashfree answers TERMINATION_REQUESTED, then TERMINATED. */
+export function terminateOrder(orderId: string) {
+  return request("end order", `/orders/${encodeURIComponent(orderId)}`, { method: "PATCH", body: JSON.stringify({ order_status: "TERMINATED" }) });
+}
+
 /**
  * Cashfree signs webhooks as base64(HMAC-SHA256(timestamp + rawBody, clientSecret)).
  * Must be checked against the raw body: re-serialised JSON turns "170.00" into 170 and breaks the signature.

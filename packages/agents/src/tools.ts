@@ -197,7 +197,9 @@ export function createKhataTools(store: KhataStore, shopName = "your shop") {
         try {
           const qr = await store.createPaymentQr({ customer: r.customer, amountPaise: due.amountPaise, purpose: `Udhaar payment to ${shopName}` });
           await store.audit("payment_qr_shown", { customerId: r.customer.id, qrId: qr.id, amountPaise: due.amountPaise });
-          return { status: "qr_ready", qrId: qr.id, customer: r.customer.name, amount: formatINR(due.amountPaise), expiresAt: qr.expiresAt };
+          // Minutes, not a timestamp: the model read the UTC time out loud as if it were IST.
+          const validForMinutes = Math.max(0, Math.round((Date.parse(qr.expiresAt) - Date.now()) / 60_000));
+          return { status: "qr_ready", qrId: qr.id, customer: r.customer.name, amount: formatINR(due.amountPaise), validForMinutes };
         } catch {
           return { status: "qr_unavailable", customer: r.customer.name, hint: "The QR couldn't be created. Offer a payment link instead." };
         }

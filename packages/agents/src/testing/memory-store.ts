@@ -76,7 +76,7 @@ export class MemoryStore implements KhataStore {
 
   async createPaymentQr({ amountPaise }: Parameters<KhataStore["createPaymentQr"]>[0]) {
     if (this.qrFails) throw new Error("Cashfree can't issue QRs on this account");
-    const qr: PaymentQr = { id: this.id("qr"), amountPaise, expiresAt: "2026-11-06T12:00:00Z" };
+    const qr: PaymentQr = { id: this.id("qr"), amountPaise, expiresAt: new Date(Date.now() + 20 * 60_000).toISOString() };
     this.qrs.push(qr);
     return qr;
   }
