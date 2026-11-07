@@ -1,5 +1,5 @@
 import "server-only";
-import { type Channel, createKhataAgent, resolveModel } from "@munshi/agents";
+import { type Channel, createKhataAgent, detectLanguage, resolveModel } from "@munshi/agents";
 import type { Language } from "@munshi/db";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { createSupabaseKhataStore } from "@/lib/khata-store";
@@ -25,9 +25,10 @@ export function buildKhataAgent(opts: {
   const approvalSecret = process.env.TOOL_APPROVAL_SECRET;
   if (!approvalSecret) throw new ApprovalSecretMissingError();
 
+  const sarvamApiKey = process.env.SARVAM_API_KEY;
   const model = resolveModel(
     {
-      sarvamApiKey: process.env.SARVAM_API_KEY,
+      sarvamApiKey,
       anthropicApiKey: process.env.ANTHROPIC_API_KEY,
       fallbackModel: process.env.MUNSHI_FALLBACK_MODEL,
     },
@@ -41,5 +42,6 @@ export function buildKhataAgent(opts: {
     language: opts.merchant.language,
     approvalSecret,
     channel: opts.channel,
+    detectLanguage: sarvamApiKey ? (text) => detectLanguage({ apiKey: sarvamApiKey, text }) : undefined,
   });
 }

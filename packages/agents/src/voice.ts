@@ -61,6 +61,23 @@ export async function transcribe(opts: {
   return { transcript: (data.transcript ?? "").trim(), languageCode: data.language_code ?? null };
 }
 
+export type DetectedLanguage = { languageCode: string; scriptCode: string | null };
+
+/**
+ * Sarvam language identification. Unlike a script check, this also reads Indian languages
+ * typed in English letters: "Ramesh eshtu baaki ide?" comes back as kn-IN in Latn.
+ */
+export async function detectLanguage(opts: { apiKey: string; text: string; fetch?: typeof fetch }): Promise<DetectedLanguage | null> {
+  const res = await (opts.fetch ?? fetch)(`${SARVAM_API}/text-lid`, {
+    method: "POST",
+    headers: { "api-subscription-key": opts.apiKey, "content-type": "application/json" },
+    body: JSON.stringify({ input: opts.text.slice(0, 1000) }),
+  });
+  if (!res.ok) throw new SarvamSpeechError(res.status, await res.text(), "language detection");
+  const data = (await res.json()) as { language_code?: string | null; script_code?: string | null };
+  return data.language_code ? { languageCode: data.language_code, scriptCode: data.script_code ?? null } : null;
+}
+
 /** Makes an agent reply speakable: drops markdown and caps the length Bulbul accepts. */
 export function speakableText(text: string) {
   const plain = text

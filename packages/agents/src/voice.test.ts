@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { speakableText, synthesize, transcribe } from "./voice";
+import { detectLanguage, speakableText, synthesize, transcribe } from "./voice";
 
 function fakeFetch(response: unknown, status = 200) {
   const calls: { url: string; init: RequestInit }[] = [];
@@ -43,6 +43,19 @@ describe("synthesize", () => {
     expect(new TextDecoder().decode(audio)).toBe("RIFF");
     const body = JSON.parse(calls[0]!.init.body as string);
     expect(body).toMatchObject({ text: "Likh diya", language_code: "en-IN", model: "bulbul:v3" });
+  });
+});
+
+describe("detectLanguage", () => {
+  it("returns the language and script, including Indian languages in English letters", async () => {
+    const { fn, calls } = fakeFetch({ language_code: "kn-IN", script_code: "Latn" });
+    expect(await detectLanguage({ apiKey: "k", text: "Ramesh eshtu baaki ide?", fetch: fn })).toEqual({ languageCode: "kn-IN", scriptCode: "Latn" });
+    expect(calls[0]!.url).toBe("https://api.sarvam.ai/text-lid");
+  });
+
+  it("returns null when no language was found", async () => {
+    const { fn } = fakeFetch({ language_code: null, script_code: null });
+    expect(await detectLanguage({ apiKey: "k", text: "...", fetch: fn })).toBeNull();
   });
 });
 

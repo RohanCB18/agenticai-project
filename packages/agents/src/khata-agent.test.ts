@@ -1,7 +1,7 @@
 import type { LanguageModelV4GenerateResult } from "@ai-sdk/provider";
 import { MockLanguageModelV4 } from "ai/test";
 import { describe, expect, it } from "vitest";
-import { asksForQr, createKhataAgent } from "./khata-agent";
+import { asksForQr, createKhataAgent, replyLanguageRule } from "./khata-agent";
 import { unstreamForcedToolCalls, withFallback } from "./models";
 import { MemoryStore } from "./testing/memory-store";
 
@@ -34,6 +34,58 @@ async function seededStore() {
   await store.addCustomer({ name: "Ramesh", phone: "+919800000001" });
   return store;
 }
+
+describe("reply language", () => {
+  it("names the language and script of the owner's message", () => {
+    expect(replyLanguageRule({ languageCode: "kn-IN", scriptCode: "Latn" })).toContain("Kannada, written in English letters");
+    expect(replyLanguageRule({ languageCode: "kn-IN", scriptCode: "Knda" })).toContain("Kannada, in its own script");
+    expect(replyLanguageRule({ languageCode: "en-IN", scriptCode: "Latn" })).toContain("only in English");
+    expect(replyLanguageRule({ languageCode: "xx-IN", scriptCode: "Latn" })).toBeNull();
+  });
+
+  it("makes the rule the last thing the model reads on every step, once per turn", async () => {
+    const store = await seededStore();
+    const lastMessages: unknown[] = [];
+    const steps = [toolCall("getBalances", {}), text("Ramesh ge 0 baaki ide")];
+    const model = new MockLanguageModelV4({
+      doGenerate: async (options) => {
+        lastMessages.push(options.prompt.at(-1));
+        return steps[lastMessages.length - 1]!;
+      },
+    });
+    let detections = 0;
+    const agent = createKhataAgent({
+      model,
+      store,
+      shopName: "Test",
+      language: "hi",
+      detectLanguage: async () => (detections++, { languageCode: "kn-IN", scriptCode: "Latn" }),
+    });
+
+    const result = await agent.generate({ messages: [{ role: "user", content: "Ramesh eshtu baaki ide?" }] });
+
+    expect(detections).toBe(1);
+    expect(lastMessages).toHaveLength(2);
+    for (const message of lastMessages) expect(message).toMatchObject({ role: "system", content: expect.stringContaining("Kannada") });
+    // The rule is for the model call only: it never joins the saved conversation.
+    expect(JSON.stringify(result.responseMessages)).not.toContain("written in English letters");
+  });
+
+  it("carries on without a rule if detection fails", async () => {
+    const store = await seededStore();
+    const agent = createKhataAgent({
+      model: scripted(text("Theek hai")),
+      store,
+      shopName: "Test",
+      language: "hi",
+      detectLanguage: async () => {
+        throw new Error("Sarvam is down");
+      },
+    });
+    const result = await agent.generate({ messages: [{ role: "user", content: "hello" }] });
+    expect(result.text).toBe("Theek hai");
+  });
+});
 
 describe("QR requests", () => {
   it("recognises QR in the scripts speech-to-text uses", () => {
