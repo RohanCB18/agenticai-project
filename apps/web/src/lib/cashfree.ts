@@ -132,6 +132,15 @@ export function getLink(linkId: string) {
   return request<{ link_status: keyof typeof LINK_STATUS; link_amount_paid: number }>("get link", `/links/${encodeURIComponent(linkId)}`);
 }
 
+/**
+ * Total paid on a link according to its orders, in paise. Cashfree warns that link_status can
+ * stay EXPIRED after a successful payment, so a link's own status can't be trusted alone.
+ */
+export async function paidOnLinkOrders(linkId: string) {
+  const orders = await request<{ order_status: string; order_amount: number }[]>("get link orders", `/links/${encodeURIComponent(linkId)}/orders`);
+  return orders.filter((order) => order.order_status === "PAID").reduce((sum, order) => sum + Math.round(order.order_amount * 100), 0);
+}
+
 /** Fails with link_not_active if the link was already paid, cancelled or expired. */
 export function cancelLink(linkId: string) {
   return request("cancel link", `/links/${encodeURIComponent(linkId)}/cancel`, { method: "POST" });

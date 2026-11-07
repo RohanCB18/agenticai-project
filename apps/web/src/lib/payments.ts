@@ -1,7 +1,7 @@
 import "server-only";
 import { formatINR } from "@munshi/db";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { cancelLink, getLink, getOrder, LINK_STATUS, type LinkStatus, terminateOrder } from "@/lib/cashfree";
+import { cancelLink, getLink, getOrder, LINK_STATUS, type LinkStatus, paidOnLinkOrders, terminateOrder } from "@/lib/cashfree";
 import { telegramSender } from "@/lib/channels/telegram";
 import type { MessagingChannel } from "@/lib/channels/types";
 import { whatsappSender } from "@/lib/channels/whatsapp";
@@ -119,17 +119,23 @@ export async function reconcilePayments(db: SupabaseClient, merchantId: string, 
     return q;
   };
   const [{ data: links }, { data: qrs }] = await Promise.all([
-    open("payment_links", "id, merchant_id, customer_id, amount_paid_paise, cashfree_link_id"),
+    open("payment_links", "id, merchant_id, customer_id, amount_paid_paise, amount_paise, cashfree_link_id"),
     open("payment_qrs", "id, merchant_id, customer_id, amount_paid_paise, amount_paise, cashfree_order_id"),
   ]);
 
   let paidPaise = 0;
   let stillOpen = 0;
 
-  for (const row of (links ?? []) as unknown as (PaymentRow & { cashfree_link_id: string })[]) {
+  for (const row of (links ?? []) as unknown as (PaymentRow & { amount_paise: number | string; cashfree_link_id: string })[]) {
     const link = await getLink(row.cashfree_link_id);
-    const status = LINK_STATUS[link.link_status] ?? "active";
-    paidPaise += await settlePayment(db, "payment_links", row, Math.round(Number(link.link_amount_paid ?? 0) * 100), status);
+    let status: LinkStatus = LINK_STATUS[link.link_status] ?? "active";
+    let paid = Math.round(Number(link.link_amount_paid ?? 0) * 100);
+    if (status !== "paid") {
+      // A link can report EXPIRED after a successful payment, so its orders have the last word.
+      paid = Math.max(paid, await paidOnLinkOrders(row.cashfree_link_id));
+      if (paid > 0) status = paid >= Number(row.amount_paise) ? "paid" : "partially_paid";
+    }
+    paidPaise += await settlePayment(db, "payment_links", row, paid, status);
     if (status === "active" || status === "partially_paid") stillOpen++;
   }
 

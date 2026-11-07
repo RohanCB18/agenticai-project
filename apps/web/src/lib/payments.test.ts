@@ -1,11 +1,13 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { cancelLink, terminateOrder } from "./cashfree";
-import { cancelOpenRequests, settlePayment } from "./payments";
+import { cancelLink, getLink, paidOnLinkOrders, terminateOrder } from "./cashfree";
+import { cancelOpenRequests, reconcilePayments, settlePayment } from "./payments";
 
 vi.mock("./cashfree", async (original) => ({
   ...(await original<typeof import("./cashfree")>()),
   cancelLink: vi.fn(async () => ({})),
+  getLink: vi.fn(async () => ({ link_status: "ACTIVE", link_amount_paid: 0 })),
+  paidOnLinkOrders: vi.fn(async () => 0),
   terminateOrder: vi.fn(async () => ({})),
 }));
 
@@ -83,6 +85,35 @@ describe("cancelOpenRequests", () => {
     await cancelOpenRequests(db, "m1", "ramesh");
     expect(terminateOrder).not.toHaveBeenCalled();
     expect(qrs[0]!.status).toBe("expired");
+  });
+});
+
+describe("reconcilePayments", () => {
+  beforeEach(() => {
+    links[0]!.amount_paise = 35000;
+    qrs.length = 0;
+  });
+
+  it("finds a payment on a link that wrongly reports EXPIRED", async () => {
+    vi.mocked(getLink).mockResolvedValueOnce({ link_status: "EXPIRED", link_amount_paid: 0 });
+    vi.mocked(paidOnLinkOrders).mockResolvedValueOnce(35000);
+
+    expect(await reconcilePayments(db, "m1", "ramesh")).toEqual({ paidPaise: 35000, stillOpen: 0 });
+    expect(links[0]!.status).toBe("paid");
+  });
+
+  it("trusts a link that already says PAID without asking for its orders", async () => {
+    vi.mocked(getLink).mockResolvedValueOnce({ link_status: "PAID", link_amount_paid: 350 });
+
+    expect(await reconcilePayments(db, "m1", "ramesh")).toEqual({ paidPaise: 35000, stillOpen: 0 });
+    expect(paidOnLinkOrders).not.toHaveBeenCalled();
+  });
+
+  it("marks a link expired only when no order was paid", async () => {
+    vi.mocked(getLink).mockResolvedValueOnce({ link_status: "EXPIRED", link_amount_paid: 0 });
+
+    expect(await reconcilePayments(db, "m1", "ramesh")).toEqual({ paidPaise: 0, stillOpen: 0 });
+    expect(links[0]!.status).toBe("expired");
   });
 });
 
