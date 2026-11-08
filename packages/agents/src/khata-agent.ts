@@ -3,6 +3,7 @@ import type { Language } from "@munshi/db";
 import { isStepCount, type ModelMessage, ToolLoopAgent, type InferAgentUIMessage, wrapLanguageModel } from "ai";
 import { type Channel, type Desk, deskInstructions, deskTools, handedOffTo, handOffTool, justHandedOff, type Route, routeMessage } from "./desks";
 import type { KhataStore } from "./store";
+import { findMentions, type Mention, mentionsHint, mentionsNote } from "./mentions";
 import { forgetOldToolResults } from "./threads";
 import { createKhataTools } from "./tools";
 import type { DetectedLanguage } from "./voice";
@@ -109,10 +110,24 @@ export function createKhataAgent({ model, store, shopName, language, approvalSec
     })();
     return languageRule;
   };
+  // Which customers and products the owner's words name, from the shop's own records. Both the
+  // router and the desk get it, so neither has to guess whether "akki" is a person or rice.
+  let mentions: Promise<Mention[]> | undefined;
+  const mentionsFor = (messages: ModelMessage[]) => {
+    mentions ??= (async () => {
+      const text = latestOwnerText(messages);
+      if (!text) return [];
+      const [customers, products] = await Promise.all([store.listCustomers(), store.listProducts()]);
+      return findMentions(text, customers, products);
+    })().catch(() => []);
+    return mentions;
+  };
   let route: Promise<Route> | undefined;
   const routeFor = (messages: ModelMessage[]) => {
     route ??= specialists
-      ? routeMessage(model, messages, asksForQr(messages)).then((r) => (onRoute?.(r), r))
+      ? mentionsFor(messages)
+          .then((found) => routeMessage(model, messages, asksForQr(messages), mentionsHint(found)))
+          .then((r) => (onRoute?.(r), r))
       : Promise.resolve<Route>({ desk: "general", by: "fallback", ms: 0, tokens: 0 });
     return route;
   };
@@ -132,9 +147,9 @@ export function createKhataAgent({ model, store, shopName, language, approvalSec
       // this turn has a tool result: shown on every step, the model kept re-calling tools until the
       // step limit and never answered. The desk, language and shop facts are looked up together.
       shopFacts ??= shopFactsNote(store).catch(() => null);
-      const [rule, facts, routed] = await Promise.all([replyRule(messages), shopFacts, routeFor(messages)]);
+      const [rule, facts, routed, found] = await Promise.all([replyRule(messages), shopFacts, routeFor(messages), mentionsFor(messages)]);
       const fresh = hasResultThisTurn(messages) ? null : FRESH_FIGURES_RULE;
-      const note = [facts, fresh, rule, extraNote].filter(Boolean).join("\n");
+      const note = [facts, mentionsNote(found), fresh, rule, extraNote].filter(Boolean).join("\n");
 
       // A desk that got the wrong message passes it on once; the turn then stays at that desk.
       const handedOff = handedOffTo(messages);

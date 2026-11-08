@@ -84,19 +84,19 @@ Send a photo of a supplier bill on Telegram. Sarvam Document AI reads it, Munshi
 
 ## Specialist desks
 
-Each owner message goes to one desk: **khata** (udhaar, cash, sales, balances), **collections** (links, QR, payment checks, habits), **stock**, or **general** (everything, for chit-chat and mixed requests). A desk sees only its own rules and tools. The orchestrator is one `sarvam-105b` call with reasoning off, run alongside language detection; approvals and QR requests skip it, and any failure falls back to general. A desk that gets the wrong message can `handOff` once, and the next step must then call a tool.
+Each owner message goes to one desk: **khata** (udhaar, cash, sales, balances), **collections** (links, QR, payment checks, habits), **stock**, or **general** (everything, for chit-chat and mixed requests). A desk sees only its own rules and tools. The orchestrator is one `sarvam-105b` call with reasoning off, run alongside language detection; approvals and QR requests skip it, and any failure falls back to general. A desk that gets the wrong message can `handOff` once, and the next step must then call a tool. Before any model reads the message, code matches its words against the shop's own customers and products (including everyday staple names), and both the router and the desk are told the result: `"akki" is the product Rice`.
 
 Measured with `npm run eval -w @munshi/agents` (real Sarvam, in-memory shop): 39 owner messages in Hinglish, Hindi, Kannada, Tamil and English, each run twice. The last 12 were written after the desks were tuned, to test rather than fit them.
 
 | | One agent, every tool | Desks |
 |---|---|---|
 | Right tool | 74 of 77 | 77 of 78 |
-| Held-out cases | 23 of 23 | 24 of 24 |
+| Held-out cases | 23 of 23 | 23 of 24 |
 | Wrong writes | 0 | 0 |
-| Median / p90 reply time | 2.7 s / 4.5 s | 2.7 s / 6.6 s |
-| Input tokens per message | 6,067 | 5,388 |
+| Median / p90 reply time | 2.7 s / 4.5 s | 2.8 s / 5.7 s |
+| Input tokens per message | 6,067 | 5,258 |
 
-One run each, so read it as a direction, not a guarantee (results in `packages/agents/evals/results`; an earlier desks run scored 78 of 78). The one agent read "Akki eshtu ide?" (Kannada: how much rice is left?) as a customer called Akki; the stock desk can't make that mistake, and product matching now knows everyday staple names (akki, chawal, arisi → Rice). Both setups once said "Sugar 5 kg stock kam kar diya" without a tool call; the claim guard now catches stock-change wording too. Cash and UPI collection are both "money in" to the router, so both money desks can record a cash payment. `MUNSHI_SPECIALISTS=off` goes back to one agent.
+One run each, so read it as a direction, not a guarantee (results in `packages/agents/evals/results`; desks runs have scored 77 or 78 of 78). The one agent read "Akki eshtu ide?" (Kannada: how much rice is left?) as a customer called Akki. Live on Telegram, the desks did too: right after a chat about Ramesh, even the stock desk passed "Akki" on as a customer. Desks didn't fix that; telling the model what the word is in this shop's records did. `evals/multiturn.eval.ts` replays that chat. Both setups once said "Sugar 5 kg stock kam kar diya" without a tool call; the claim guard now catches stock-change wording too. Cash and UPI collection are both "money in" to the router, so both money desks can record a cash payment. `MUNSHI_SPECIALISTS=off` goes back to one agent.
 
 ## Receipts, not promises
 

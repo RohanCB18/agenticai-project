@@ -43,7 +43,7 @@ const RULES = {
   qr: `Any request for a QR ("QR dikhao", "X ka QR", "scan karega"), or a customer who is in the shop ("yahan khada hai"), means call showPaymentQr, without asking first or looking up the balance. Never offer a link when the owner asked for a QR. Only after it returns qr_ready, tell the owner the QR is on screen. If it reports qr_unavailable, offer a payment link.`,
   check: `"X ka payment aaya?" or "did X pay?" means checkPayment.`,
   habits: `For payment patterns ("X kab deti hai?"), use paymentHabits rather than memory or guesses.`,
-  stock: `Stock that arrived ("10 packet Maggi aaya") is updateStock with a positive change; stock sold or used up is a negative change. "Kya khatam ho raha hai?" means getStock.`,
+  stock: `Stock that arrived ("10 packet Maggi aaya") is updateStock with a positive change; stock sold or used up is a negative change. "Kya khatam ho raha hai?" means getStock. Owners name items in their own language (akki, chawal, sakkare): check getStock before deciding a word is a customer's name.`,
   memory: `When the owner tells you a lasting fact or a preference ("Ramesh is Lakshmi's husband", "call me Akka", "Fatima pays on Saturdays"), save it with remember. Before answering about a customer's background, check recall and repeat what it says without adding to it: "the owner" in a fact means the person you are talking to, so say "your", and any other name is someone else.`,
 };
 
@@ -169,7 +169,7 @@ stock: how much of an item is left, stock that arrived or sold, what is running 
 general: greetings, thanks, remembering or recalling facts, anything else, or a message that needs more than one desk.
   "Hello ji", "Yaad rakhna, Suresh Monday ko aata hai", "Lakshmi kaun hai?"
 
-If the owner only answers Munshi ("haan", "no", "bhej do"), route by what Munshi asked. Otherwise route by the owner's message alone.`;
+If the owner only answers a question Munshi asked ("haan", "no", "bhej do"), route by what Munshi asked. Otherwise route by the owner's message alone. When the shop's records say a word is a product, the message is about that product.`;
 
 const textOf = (message: ModelMessage | undefined) => {
   if (!message || message.role === "tool") return "";
@@ -182,18 +182,25 @@ const textOf = (message: ModelMessage | undefined) => {
  * 0.2 s on Sarvam). Approvals and QR requests skip the call; any failure falls back to "general",
  * which can do everything, so a router problem costs focus, never a wrong answer.
  */
-export async function routeMessage(model: LanguageModel, messages: ModelMessage[], asksForQr: boolean): Promise<Route> {
+export async function routeMessage(model: LanguageModel, messages: ModelMessage[], asksForQr: boolean, shopRecords?: string | null): Promise<Route> {
   const started = Date.now();
   const last = messages.at(-1);
   if (last?.role === "tool") return { desk: "general", by: "approval", ms: 0, tokens: 0 };
   if (asksForQr) return { desk: "collections", by: "qr", ms: 0, tokens: 0 };
 
   const ownerText = textOf(last);
-  // Munshi's last words matter only for short answers like "haan" or "bhejo do". For anything
-  // longer they mislead: after an udhaar reply, "Chawal kitna bacha hai?" went to the khata desk.
-  const shortAnswer = ownerText.split(/\s+/).filter(Boolean).length <= 3;
-  const previous = shortAnswer ? [...messages.slice(0, -1)].reverse().find((message) => message.role === "assistant" && textOf(message)) : undefined;
-  const prompt = `${previous ? `Munshi said: ${textOf(previous).slice(0, 300)}\n` : ""}Owner: ${ownerText.slice(0, 500)}`;
+  // Munshi's last words matter only when it asked something and the owner is answering ("haan",
+  // "bhej do"). Otherwise they mislead: live, after "Ramesh ka balance 0 rupaye hai.", the
+  // three-word "Akki eshtu ide" went to the khata desk.
+  const previous = [...messages.slice(0, -1)].reverse().find((message) => message.role === "assistant" && textOf(message));
+  const answering = previous && textOf(previous).trim().endsWith("?") && ownerText.split(/\s+/).filter(Boolean).length <= 4;
+  const prompt = [
+    answering ? `Munshi asked: ${textOf(previous).slice(0, 300)}` : null,
+    `Owner: ${ownerText.slice(0, 500)}`,
+    shopRecords ? `In this shop's records, ${shopRecords}.` : null,
+  ]
+    .filter(Boolean)
+    .join("\n");
   try {
     const result = await generateText({
       model,

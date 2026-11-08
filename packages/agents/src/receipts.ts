@@ -77,6 +77,13 @@ export const UNBACKED_CLAIM_NOTE =
 
 export const NOTHING_SAVED = "⚠️ Nothing was saved this time. Please check and ask again.";
 
+/**
+ * The closing note for a retry after an empty answer. Asked again with nothing new, the model
+ * came back empty a second time (live: "Sorry, I couldn't put that into words").
+ */
+export const EMPTY_REPLY_NOTE =
+  "Your last answer to the owner was empty. Reply now in one or two short sentences: do what they asked with a tool, or ask them a short question.";
+
 // An owner message that reports money or goods changing hands: an amount and a verb of giving,
 // taking, paying, selling or arriving. Live, "Ramesh ne 200 diye, ab kitna baaki hai?" got only
 // the balance back, and nothing said the 200 was never written down.

@@ -16,11 +16,14 @@ const TURNS: { text: string; expect: string[] }[] = [
   { text: "Fatima ka QR dikhao", expect: ["showPaymentQr"] },
   { text: "Ramesh ne 200 cash diye", expect: ["recordPayment"] },
   { text: "Ramesh ka kitna baaki hai ab?", expect: ["getBalances"] },
+  // Live, right after a balance reply, every desk took "Akki" (rice) for a customer's name.
+  { text: "Akki eshtu ide", expect: ["getStock"] },
   { text: "Thank you", expect: [] },
 ];
 
 it.skipIf(!key)("a chat that moves between desks", { timeout: 600_000 }, async () => {
   const store = await seededStore();
+  store.products[0]!.aliases = []; // like the live shop: Rice has no "akki" alias
   let messages: ModelMessage[] = [];
   const misses: string[] = [];
   for (const turn of TURNS) {

@@ -44,6 +44,24 @@ describe("routeMessage", () => {
     expect(promptText(prompts[1]!)).not.toContain("Link bhejun?");
   });
 
+  it("ignores Munshi's last words when it didn't ask anything", async () => {
+    // Live: after this balance reply, "Akki eshtu ide" went to the khata desk.
+    const { model, prompts } = router("stock");
+    await routeMessage(
+      model,
+      [
+        { role: "user", content: "Ramesh ne 200 diye, ab kitna baaki hai?" },
+        { role: "assistant", content: "Ramesh ka balance 0 rupaye hai." },
+        { role: "user", content: "Akki eshtu ide" },
+      ],
+      false,
+      '"akki" is the product Rice',
+    );
+    expect(promptText(prompts[0]!)).not.toContain("balance");
+    expect(promptText(prompts[0]!)).toContain("akki");
+    expect(promptText(prompts[0]!)).toContain("the product Rice");
+  });
+
   it("falls back to general when the model fails", async () => {
     const model = new MockLanguageModelV4({
       doGenerate: async () => {

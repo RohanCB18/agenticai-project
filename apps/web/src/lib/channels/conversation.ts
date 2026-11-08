@@ -2,6 +2,7 @@ import "server-only";
 import {
   approvalResponse,
   claimsUnbackedAction,
+  EMPTY_REPLY_NOTE,
   missedEntry,
   NOT_RECORDED,
   closePendingApprovals,
@@ -111,6 +112,7 @@ export async function handleInbound(inbound: Inbound, sender: ChannelSender) {
     buildKhataAgent({ db: admin, merchant: { id: merchant.id, shopName: merchant.shop_name, language }, source: channel, channel, extraNote });
   const agent = agentFor();
   const result = await agent.generate({ messages });
+  console.info(`[munshi] ${channel} run: ${runSummary(result)}`);
   let responseMessages = result.responseMessages;
   let text = result.text.trim();
 
@@ -119,14 +121,16 @@ export async function handleInbound(inbound: Inbound, sender: ChannelSender) {
   if (claimsUnbackedAction(text, completedActions(responseMessages))) {
     console.warn("[munshi] reply claimed an action no tool took; retrying:", text);
     const retry = await agentFor(UNBACKED_CLAIM_NOTE).generate({ messages });
+    console.info(`[munshi] ${channel} retry run: ${runSummary(retry)}`);
     responseMessages = retry.responseMessages;
     text = retry.text.trim();
     if (claimsUnbackedAction(text, completedActions(responseMessages))) text = `${text}\n\n${NOTHING_SAVED}`;
   }
-  // In testing the model sometimes ran a tool and then wrote nothing. Give it one more turn with
-  // the tool results in hand; it answers from them rather than redoing the tools.
+  // The model sometimes ends with no words at all. Give it one more turn with any tool results in
+  // hand, told its answer was empty: asked again with nothing new, it came back empty again.
   if (!text && pendingApprovals([...messages, ...responseMessages]).length === 0) {
-    const retry = await agent.generate({ messages: [...messages, ...responseMessages] });
+    const retry = await agentFor(EMPTY_REPLY_NOTE).generate({ messages: [...messages, ...responseMessages] });
+    console.warn(`[munshi] ${channel} empty reply; asked again: ${runSummary(retry)}`);
     responseMessages = [...responseMessages, ...retry.responseMessages];
     text = retry.text.trim() || "Sorry, I couldn't put that into words. Please ask again.";
   }
@@ -189,6 +193,12 @@ async function linkAccount(admin: SupabaseClient, inbound: Inbound & { kind: "li
 
   const { data: merchant } = await admin.from("merchants").select("shop_name").eq("id", row.merchant_id).single();
   await sender.sendText(chatId, `✅ Linked to ${merchant?.shop_name ?? "your shop"}.\n\n${HELP}`);
+}
+
+/** One log line per model run: steps, tools in order, how it ended. Enough to debug from Vercel's logs. */
+function runSummary(run: { steps: { toolCalls: { toolName: string }[] }[]; finishReason: string; text: string }) {
+  const tools = run.steps.flatMap((step) => step.toolCalls.map((call) => call.toolName));
+  return `${run.steps.length} steps, tools ${tools.join(" > ") || "none"}, finished ${run.finishReason}, ${run.text.trim().length} chars`;
 }
 
 /** Customer and product names bias speech recognition toward this shop's vocabulary. */
