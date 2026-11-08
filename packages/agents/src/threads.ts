@@ -72,6 +72,8 @@ const OLD_RESULT = "Earlier result, no longer current. Call the tool again for t
  * Blanks tool results from before the owner's latest message. Balances and stock change between
  * messages (bills, payments, other channels), and in testing the model repeated old figures instead
  * of calling the tool again. Calls and their inputs stay, so "uska total?" still knows who "uska" is.
+ * A question the owner was asked ("is this a repeat?") stays: their answer only means something
+ * next to it, and the tools check it before recording.
  */
 export function forgetOldToolResults(messages: ModelMessage[]): ModelMessage[] {
   let lastOwner = messages.length - 1;
@@ -80,9 +82,34 @@ export function forgetOldToolResults(messages: ModelMessage[]): ModelMessage[] {
     if (index >= lastOwner || message.role !== "tool") return message;
     return {
       ...message,
-      content: message.content.map((part) => (part.type === "tool-result" ? { ...part, output: { type: "text" as const, value: OLD_RESULT } } : part)),
+      content: message.content.map((part) =>
+        part.type === "tool-result" && !isOpenQuestion(part.output) ? { ...part, output: { type: "text" as const, value: OLD_RESULT } } : part,
+      ),
     };
   });
+}
+
+function isOpenQuestion(output: { type: string; value?: unknown }) {
+  return output.type === "json" && (output.value as { status?: unknown } | null)?.status === "possible_repeat";
+}
+
+/**
+ * True when the owner was asked about this exact repeat before their latest message, so a
+ * "yes, it's new" from them can be trusted. A model setting confirmedNew on its own can't be:
+ * in testing it did, and the same payment was saved twice.
+ */
+export function ownerWasAskedAboutRepeat(messages: ModelMessage[], customer: string, amount: string): boolean {
+  let lastOwner = messages.length - 1;
+  while (lastOwner >= 0 && messages[lastOwner]!.role !== "user") lastOwner--;
+  return messages.slice(0, Math.max(lastOwner, 0)).some(
+    (message) =>
+      message.role === "tool" &&
+      message.content.some((part) => {
+        if (part.type !== "tool-result" || part.output.type !== "json") return false;
+        const value = part.output.value as { status?: unknown; customer?: unknown; amount?: unknown } | null;
+        return value?.status === "possible_repeat" && value.customer === customer && value.amount === amount;
+      }),
+  );
 }
 
 /** Keeps roughly the last `max` messages, always starting at an owner message so tool calls stay paired. */

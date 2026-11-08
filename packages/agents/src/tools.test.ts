@@ -34,6 +34,41 @@ describe("khata tools", () => {
     expect(out).toMatchObject({ status: "customer_not_found" });
   });
 
+  it("checks the ledger for a repeat instead of recording twice", async () => {
+    await tools.recordPayment.execute!({ customerName: "Fatima", amount: 200, method: "cash" }, ctx);
+    const again = (await tools.recordPayment.execute!({ customerName: "Fatima", amount: 200, method: "cash" }, ctx)) as Record<string, unknown>;
+    expect(again).toMatchObject({ status: "possible_repeat", customer: "Fatima", amount: "₹200", savedMinutesAgo: 0 });
+    expect(store.entries).toHaveLength(1);
+    // The model saying "it's new" on its own changes nothing: in testing it did, and saved twice.
+    expect(await tools.recordPayment.execute!({ customerName: "Fatima", amount: 200, method: "cash", confirmedNew: true }, ctx)).toMatchObject({ status: "possible_repeat" });
+    // After Munshi asked and the owner said it's a new one, it is saved.
+    const asked = {
+      ...(ctx as object),
+      messages: [
+        { role: "tool", content: [{ type: "tool-result", toolCallId: "t0", toolName: "recordPayment", output: { type: "json", value: again } }] },
+        { role: "assistant", content: "Fatima ka 200 abhi likha tha. Naya hai?" },
+        { role: "user", content: "Haan, naya hai" },
+      ],
+    } as never;
+    expect(await tools.recordPayment.execute!({ customerName: "Fatima", amount: 200, method: "cash", confirmedNew: true }, asked)).toMatchObject({ status: "recorded" });
+    // A different amount, or udhaar rather than a payment, isn't a repeat.
+    expect(await tools.recordPayment.execute!({ customerName: "Fatima", amount: 150, method: "cash" }, ctx)).toMatchObject({ status: "recorded" });
+    expect(await tools.recordCredit.execute!({ customerName: "Fatima", amount: 200 }, ctx)).toMatchObject({ status: "recorded" });
+    expect(store.entries).toHaveLength(4);
+  });
+
+  it("records the same amount again once the repeat window has passed", async () => {
+    await tools.recordCredit.execute!({ customerName: "Ramesh", amount: 300 }, ctx);
+    store.entries[0]!.createdAt = new Date(Date.now() - 20 * 60_000).toISOString();
+    expect(await tools.recordCredit.execute!({ customerName: "Ramesh", amount: 300 }, ctx)).toMatchObject({ status: "recorded" });
+  });
+
+  it("calls money paid beyond the udhaar an advance, never a negative balance", async () => {
+    const out = await tools.recordPayment.execute!({ customerName: "Fatima", amount: 200, method: "cash" }, ctx);
+    expect(out).toMatchObject({ status: "recorded", nowOwes: "₹0", advance: "₹200" });
+    expect(await tools.getBalances.execute!({ customerName: "Fatima" }, ctx)).toMatchObject({ total: "₹0", customers: [{ name: "Fatima", owes: "₹0", advance: "₹200" }] });
+  });
+
   it("nets payments against credit", async () => {
     await tools.recordCredit.execute!({ customerName: "Fatima", amount: 1200 }, ctx);
     const out = await tools.recordPayment.execute!({ customerName: "Fatima", amount: 200, method: "upi" }, ctx);

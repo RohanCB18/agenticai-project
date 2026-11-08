@@ -75,5 +75,8 @@ export async function seededStore() {
     { id: "prd_sugar", name: "Sugar", aliases: ["cheeni", "sakkare"], unit: "kg", stockQty: 3, reorderLevel: 5, pricePaise: 4500 },
   );
   await store.remember({ fact: "Ramesh is the husband of Lakshmi, the owner's neighbour.", customerId: ramesh.id });
+  // The history is from earlier in the week, not seconds ago: the tools treat an identical entry
+  // from the last few minutes as a possible repeat.
+  store.entries.forEach((entry, i) => (entry.createdAt = new Date(Date.now() - (5 - i) * 24 * 60 * 60 * 1000).toISOString()));
   return store;
 }

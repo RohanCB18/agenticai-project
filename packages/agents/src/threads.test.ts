@@ -1,6 +1,6 @@
 import type { ModelMessage } from "ai";
 import { describe, expect, it } from "vitest";
-import { approvalResponse, closePendingApprovals, forgetOldToolResults, pendingApprovals, toolOutputs, trimThread } from "./threads";
+import { approvalResponse, closePendingApprovals, forgetOldToolResults, ownerWasAskedAboutRepeat, pendingApprovals, toolOutputs, trimThread } from "./threads";
 
 const asked: ModelMessage[] = [
   { role: "user", content: "Ramesh ko link bhejo" },
@@ -69,6 +69,21 @@ describe("threads", () => {
     expect(seen[1]).toBe(thread[1]); // the call and its input stay
     expect(seen[6]).toBe(thread[6]); // this turn's result is untouched
     expect(JSON.stringify(thread[2])).toContain("25"); // the saved thread keeps the real value
+  });
+
+  it("keeps a repeat question readable, and knows when the owner answered it", () => {
+    const question = { status: "possible_repeat", customer: "Fatima", amount: "₹200" };
+    const thread: ModelMessage[] = [
+      { role: "user", content: "Fatima ne 200 diye" },
+      { role: "tool", content: [{ type: "tool-result", toolCallId: "p1", toolName: "recordPayment", output: { type: "json", value: question } }] },
+      { role: "assistant", content: "Abhi 200 likha tha. Naya hai?" },
+      { role: "user", content: "Haan naya hai" },
+    ];
+    expect((forgetOldToolResults(thread)[1] as { content: { output: unknown }[] }).content[0]!.output).toEqual({ type: "json", value: question });
+    expect(ownerWasAskedAboutRepeat(thread, "Fatima", "₹200")).toBe(true);
+    expect(ownerWasAskedAboutRepeat(thread, "Fatima", "₹300")).toBe(false);
+    // Asked, but the owner hasn't answered yet.
+    expect(ownerWasAskedAboutRepeat(thread.slice(0, 3), "Fatima", "₹200")).toBe(false);
   });
 
   it("trims long threads at an owner message", () => {

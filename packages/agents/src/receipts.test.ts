@@ -24,7 +24,7 @@ describe("receiptLines", () => {
     const lines = receiptLines(
       completedActions([
         result("recordCredit", { status: "recorded", customer: "Ramesh", amount: "₹450", nowOwes: "₹900" }),
-        result("recordPayment", { status: "recorded", customer: "Fatima", amount: "₹200", nowOwes: "₹0" }),
+        result("recordPayment", { status: "recorded", customer: "Fatima", amount: "₹200", nowOwes: "₹0", advance: "₹50" }),
         result("recordSale", { status: "recorded", kind: "expense", amount: "₹120" }),
         result("updateStock", { status: "updated", product: "Rice", stock: "50 kg" }),
         result("addCustomer", { status: "added", customer: { id: "c1", name: "Anand" } }),
@@ -33,7 +33,7 @@ describe("receiptLines", () => {
     );
     expect(lines).toEqual([
       "🧾 Udhaar: Ramesh ₹450 · owes ₹900",
-      "🧾 Payment: Fatima ₹200 · owes ₹0",
+      "🧾 Payment: Fatima ₹200 · owes ₹0 (₹50 advance)",
       "🧾 Expense: ₹120",
       "🧾 Stock: Rice now 50 kg",
       "🧾 New customer: Anand",

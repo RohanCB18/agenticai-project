@@ -185,6 +185,7 @@ function Output({ name, out }: { name: string; out: Record<string, unknown> }) {
       <p>
         {String(out.customer)}: {String(out.amount)}
         {out.nowOwes ? ` · now owes ${String(out.nowOwes)}` : ""}
+        {out.advance ? ` (${String(out.advance)} advance)` : ""}
       </p>
     );
   }

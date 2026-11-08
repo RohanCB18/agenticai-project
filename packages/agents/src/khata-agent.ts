@@ -4,6 +4,7 @@ import { isStepCount, type ModelMessage, ToolLoopAgent, type InferAgentUIMessage
 import { type Channel, type Desk, deskInstructions, deskTools, handedOffTo, handOffTool, justHandedOff, type Route, routeMessage } from "./desks";
 import type { KhataStore } from "./store";
 import { findMentions, type Mention, mentionsHint, mentionsNote } from "./mentions";
+import { completedActions, reportsEntry } from "./receipts";
 import { forgetOldToolResults } from "./threads";
 import { createKhataTools } from "./tools";
 import type { DetectedLanguage } from "./voice";
@@ -44,6 +45,26 @@ function withClosingNote(model: LanguageModelV4, note: string) {
       transformParams: async ({ params }) => ({ ...params, prompt: [...params.prompt, { role: "system", content: note }] }),
     },
   });
+}
+
+/**
+ * Read while an owner's report of money or goods changing hands has no entry yet. Live, the
+ * owner resent "Ramesh ne 200 diye" and the model copied its earlier balance-only answer.
+ */
+export const RECORD_IT_NOTE =
+  "The owner's latest message reports money or goods changing hands. Record it with the right tool before answering anything else; the tool says if it looks like a repeat. Only if it is clearly a question about an old entry, ask instead.";
+
+/** True once this turn saved an entry, or a tool asked whether it was a repeat. */
+function entrySettledThisTurn(messages: ModelMessage[]) {
+  let lastOwner = messages.length - 1;
+  while (lastOwner >= 0 && messages[lastOwner]!.role !== "user") lastOwner--;
+  const turn = messages.slice(lastOwner + 1);
+  const asked = turn.some(
+    (message) =>
+      message.role === "tool" &&
+      message.content.some((part) => part.type === "tool-result" && part.output.type === "json" && (part.output.value as { status?: unknown } | null)?.status === "possible_repeat"),
+  );
+  return asked || completedActions(turn).length > 0;
 }
 
 /** True once a tool has answered since the owner's latest message. */
@@ -149,7 +170,8 @@ export function createKhataAgent({ model, store, shopName, language, approvalSec
       shopFacts ??= shopFactsNote(store).catch(() => null);
       const [rule, facts, routed, found] = await Promise.all([replyRule(messages), shopFacts, routeFor(messages), mentionsFor(messages)]);
       const fresh = hasResultThisTurn(messages) ? null : FRESH_FIGURES_RULE;
-      const note = [facts, mentionsNote(found), fresh, rule, extraNote].filter(Boolean).join("\n");
+      const recordIt = reportsEntry(latestOwnerText(messages)) && !entrySettledThisTurn(messages);
+      const note = [facts, mentionsNote(found), recordIt ? RECORD_IT_NOTE : null, fresh, rule, extraNote].filter(Boolean).join("\n");
 
       // A desk that got the wrong message passes it on once; the turn then stays at that desk.
       const handedOff = handedOffTo(messages);

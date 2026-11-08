@@ -2,6 +2,7 @@ import { formatINR, Language, rupeesToPaise } from "@munshi/db";
 import { tool } from "ai";
 import { z } from "zod";
 import { paymentHabits } from "./habits";
+import { ownerWasAskedAboutRepeat } from "./threads";
 import { rankByName } from "./match";
 import { rankProducts, tooClose } from "./staples";
 import type { Customer, KhataStore } from "./store";
@@ -14,6 +15,41 @@ const Rupees = z
 
 type Resolved = { ok: true; customer: Customer } | { ok: false; result: Record<string, unknown> };
 type Due = { ok: true; amountPaise: number } | { ok: false; result: Record<string, unknown> };
+
+/**
+ * What a customer owes, never below zero: money paid beyond the udhaar is an advance. Live, a
+ * ₹200 payment on a ₹0 balance came back as "owes -₹200", and Munshi told the owner "baaki 0".
+ */
+function dues(outstandingPaise: number) {
+  return outstandingPaise < 0 ? { nowOwes: formatINR(0), advance: formatINR(-outstandingPaise) } : { nowOwes: formatINR(outstandingPaise) };
+}
+
+const ConfirmedNew = z
+  .boolean()
+  .optional()
+  .describe("Only after this tool returned possible_repeat and the owner then said it is a new entry. Ignored otherwise.");
+
+// Repeats are checked against the ledger, not the chat. Live, the owner sent "Ramesh ne 200 diye"
+// again after the first one was never saved; told to "never record the same entry twice", the
+// model saw the earlier message and skipped it. Only the ledger knows what was really saved.
+const REPEAT_WINDOW_MS = 15 * 60 * 1000;
+
+/** The same entry for the same customer, saved in the last few minutes, if there is one. */
+async function recentTwin(store: KhataStore, customer: Customer, kind: "credit_given" | "payment_received", amountPaise: number) {
+  const now = Date.now();
+  const twin = (await store.recentEntries(20, customer.id)).find(
+    (entry) => entry.kind === kind && entry.amountPaise === amountPaise && now - Date.parse(entry.createdAt) < REPEAT_WINDOW_MS,
+  );
+  if (!twin) return null;
+  const minutesAgo = Math.max(0, Math.round((now - Date.parse(twin.createdAt)) / 60_000));
+  return {
+    status: "possible_repeat",
+    customer: customer.name,
+    amount: formatINR(amountPaise),
+    savedMinutesAgo: minutesAgo,
+    hint: "The same entry was saved a few minutes ago. Ask the owner whether this is a new one. If they say yes, call again with confirmedNew: true.",
+  };
+}
 
 /** What to collect: the requested amount, or the full balance. Never more than the customer owes. */
 async function amountDue(store: KhataStore, customer: Customer, amount?: number): Promise<Due> {
@@ -70,10 +106,19 @@ export function createKhataTools(store: KhataStore, shopName = "your shop") {
 
     recordCredit: tool({
       description: "Record udhaar: the customer took goods now and will pay later. Increases what they owe.",
-      inputSchema: z.object({ customerName: z.string(), amount: Rupees, note: z.string().max(200).optional().describe("What they took, e.g. 'rice and dal'") }),
-      execute: async ({ customerName, amount, note }) => {
+      inputSchema: z.object({
+        customerName: z.string(),
+        amount: Rupees,
+        note: z.string().max(200).optional().describe("What they took, e.g. 'rice and dal'"),
+        confirmedNew: ConfirmedNew,
+      }),
+      execute: async ({ customerName, amount, note, confirmedNew }, { messages }) => {
         const r = await resolveCustomer(store, customerName);
         if (!r.ok) return r.result;
+        if (!(confirmedNew && ownerWasAskedAboutRepeat(messages, r.customer.name, formatINR(rupeesToPaise(amount))))) {
+          const twin = await recentTwin(store, r.customer, "credit_given", rupeesToPaise(amount));
+          if (twin) return twin;
+        }
         const entry = await store.addLedgerEntry({ kind: "credit_given", amountPaise: rupeesToPaise(amount), customerId: r.customer.id, note });
         const [balance] = await store.balances(r.customer.id);
         return {
@@ -81,20 +126,24 @@ export function createKhataTools(store: KhataStore, shopName = "your shop") {
           entryId: entry.id,
           customer: r.customer.name,
           amount: formatINR(entry.amountPaise),
-          nowOwes: formatINR(balance?.outstandingPaise ?? entry.amountPaise),
+          ...dues(balance?.outstandingPaise ?? entry.amountPaise),
         };
       },
     }),
 
     recordPayment: tool({
       description: "Record that a customer paid back some or all of their udhaar (cash or UPI received in person).",
-      inputSchema: z.object({ customerName: z.string(), amount: Rupees, method: z.enum(["cash", "upi", "other"]).default("cash") }),
-      execute: async ({ customerName, amount, method }) => {
+      inputSchema: z.object({ customerName: z.string(), amount: Rupees, method: z.enum(["cash", "upi", "other"]).default("cash"), confirmedNew: ConfirmedNew }),
+      execute: async ({ customerName, amount, method, confirmedNew }, { messages }) => {
         const r = await resolveCustomer(store, customerName);
         if (!r.ok) return r.result;
+        if (!(confirmedNew && ownerWasAskedAboutRepeat(messages, r.customer.name, formatINR(rupeesToPaise(amount))))) {
+          const twin = await recentTwin(store, r.customer, "payment_received", rupeesToPaise(amount));
+          if (twin) return twin;
+        }
         const entry = await store.addLedgerEntry({ kind: "payment_received", amountPaise: rupeesToPaise(amount), customerId: r.customer.id, note: method });
         const [balance] = await store.balances(r.customer.id);
-        return { status: "recorded", entryId: entry.id, customer: r.customer.name, amount: formatINR(entry.amountPaise), nowOwes: formatINR(balance?.outstandingPaise ?? 0) };
+        return { status: "recorded", entryId: entry.id, customer: r.customer.name, amount: formatINR(entry.amountPaise), ...dues(balance?.outstandingPaise ?? 0) };
       },
     }),
 
@@ -118,12 +167,15 @@ export function createKhataTools(store: KhataStore, shopName = "your shop") {
           customerId = r.customer.id;
         }
         const rows = (await store.balances(customerId)).filter((b) => customerId || b.outstandingPaise > 0);
-        const total = rows.reduce((sum, b) => sum + b.outstandingPaise, 0);
+        const total = rows.reduce((sum, b) => sum + Math.max(0, b.outstandingPaise), 0);
         return {
           total: formatINR(total),
           customers: rows
             .sort((a, b) => b.outstandingPaise - a.outstandingPaise)
-            .map((b) => ({ name: b.name, owes: formatINR(b.outstandingPaise), lastCreditAt: b.lastCreditAt, lastPaymentAt: b.lastPaymentAt })),
+            .map((b) => {
+              const { nowOwes, ...advance } = dues(b.outstandingPaise);
+              return { name: b.name, owes: nowOwes, ...advance, lastCreditAt: b.lastCreditAt, lastPaymentAt: b.lastPaymentAt };
+            }),
         };
       },
     }),
@@ -293,7 +345,7 @@ export function createKhataTools(store: KhataStore, shopName = "your shop") {
           customer: customer?.name,
           received: formatINR(paidPaise),
           stillWaitingOn: stillOpen,
-          ...(balance ? { nowOwes: formatINR(balance.outstandingPaise) } : {}),
+          ...(balance ? dues(balance.outstandingPaise) : {}),
         };
       },
     }),

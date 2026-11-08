@@ -23,6 +23,7 @@ export function completedActions(messages: ModelMessage[]): Action[] {
 }
 
 const s = (value: unknown) => (value === undefined || value === null ? "" : String(value));
+const advanceNote = (output: Record<string, unknown>) => (output.advance ? ` (${s(output.advance)} advance)` : "");
 
 /**
  * One line per saved change, built from the tool's output. Links, QRs and payment checks are
@@ -32,9 +33,9 @@ export function receiptLines(actions: Action[]): string[] {
   return actions.flatMap(({ tool, output }) => {
     switch (tool) {
       case "recordCredit":
-        return [`🧾 Udhaar: ${s(output.customer)} ${s(output.amount)} · owes ${s(output.nowOwes)}`];
+        return [`🧾 Udhaar: ${s(output.customer)} ${s(output.amount)} · owes ${s(output.nowOwes)}${advanceNote(output)}`];
       case "recordPayment":
-        return [`🧾 Payment: ${s(output.customer)} ${s(output.amount)} · owes ${s(output.nowOwes)}`];
+        return [`🧾 Payment: ${s(output.customer)} ${s(output.amount)} · owes ${s(output.nowOwes)}${advanceNote(output)}`];
       case "recordSale":
         return [`🧾 ${output.kind === "expense" ? "Expense" : "Sale"}: ${s(output.amount)}`];
       case "updateStock":

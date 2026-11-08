@@ -42,3 +42,36 @@ it.skipIf(!key)("a chat that moves between desks", { timeout: 600_000 }, async (
   expect(ramesh?.outstandingPaise).toBe(70000);
   expect(misses).toEqual([]);
 });
+
+const say = async (store: Awaited<ReturnType<typeof seededStore>>, messages: ModelMessage[]) => {
+  const result = await createKhataAgent({ model: sarvamModel(key!), store, shopName: "Sri Ganesh Stores", language: "hi", channel: "telegram" }).generate({ messages });
+  return { result, messages: [...messages, ...result.responseMessages] };
+};
+
+const PAID = "Ramesh ne 200 diye, ab kitna baaki hai?";
+
+// Live: the owner resent a payment the first answer never saved. The model copied its old answer.
+it.skipIf(!key)("records a resent payment that was never saved", { timeout: 300_000 }, async () => {
+  const store = await seededStore();
+  await store.addLedgerEntry({ kind: "payment_received", amountPaise: 45000, customerId: store.customers[0]!.id }); // owes 0
+  const { result } = await say(store, [
+    { role: "user", content: PAID },
+    { role: "assistant", content: "Ramesh ka balance 0 rupaye hai." },
+    { role: "user", content: PAID },
+  ]);
+  console.log(`resent: ${result.text.trim().slice(0, 100)}`);
+  const [ramesh] = await store.balances(store.customers[0]!.id);
+  expect(ramesh?.outstandingPaise).toBe(-20000); // saved, as a ₹200 advance
+});
+
+// The same payment twice in a row is asked about, and saved only once the owner says it's new.
+it.skipIf(!key)("asks about a repeat and saves it only when the owner confirms", { timeout: 300_000 }, async () => {
+  const store = await seededStore();
+  let { messages } = await say(store, [{ role: "user", content: "Fatima ne 100 cash diye" }]);
+  expect(store.entries).toHaveLength(4);
+  ({ messages } = await say(store, [...messages, { role: "user", content: "Fatima ne 100 cash diye" }]));
+  console.log(`repeat: ${JSON.stringify(messages.at(-1)?.content).slice(0, 100)}`);
+  expect(store.entries).toHaveLength(4); // asked, not saved
+  await say(store, [...messages, { role: "user", content: "Haan, ye naya payment hai" }]);
+  expect(store.entries).toHaveLength(5);
+});

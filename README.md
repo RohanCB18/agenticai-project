@@ -90,11 +90,11 @@ Measured with `npm run eval -w @munshi/agents` (real Sarvam, in-memory shop): 39
 
 | | One agent, every tool | Desks |
 |---|---|---|
-| Right tool | 74 of 77 | 77 of 78 |
-| Held-out cases | 23 of 23 | 23 of 24 |
+| Right tool | 74 of 77 | 78 of 78 |
+| Held-out cases | 23 of 23 | 24 of 24 |
 | Wrong writes | 0 | 0 |
 | Median / p90 reply time | 2.7 s / 4.5 s | 2.8 s / 5.7 s |
-| Input tokens per message | 6,067 | 5,258 |
+| Input tokens per message | 6,067 | 5,476 |
 
 One run each, so read it as a direction, not a guarantee (results in `packages/agents/evals/results`; desks runs have scored 77 or 78 of 78). The one agent read "Akki eshtu ide?" (Kannada: how much rice is left?) as a customer called Akki. Live on Telegram, the desks did too: right after a chat about Ramesh, even the stock desk passed "Akki" on as a customer. Desks didn't fix that; telling the model what the word is in this shop's records did. `evals/multiturn.eval.ts` replays that chat. Both setups once said "Sugar 5 kg stock kam kar diya" without a tool call; the claim guard now catches stock-change wording too. Cash and UPI collection are both "money in" to the router, so both money desks can record a cash payment. `MUNSHI_SPECIALISTS=off` goes back to one agent.
 
@@ -103,6 +103,8 @@ One run each, so read it as a direction, not a guarantee (results in `packages/a
 A model can write "Ramesh ka 450 likh diya" without calling a tool. So on Telegram every change gets a receipt line built by code from the tool's result (`🧾 Udhaar: Ramesh ₹450 · owes ₹900`), never by the model. If a reply claims something was saved (in English, Hinglish, Hindi, Kannada or Tamil) and no tool ran, Munshi retries once, told what went wrong. If it still claims without acting, the reply ends with "⚠️ Nothing was saved this time."
 
 The opposite slip happens too: live, "Ramesh ne 200 diye, ab kitna baaki hai?" got only the balance back, and the 200 was never written down. When the owner's message reports money or goods changing hands, nothing was saved, and the reply doesn't ask about it, the reply ends with "📝 Nothing was recorded from this message." There is no automatic retry here: if the owner was asking about an old payment, a retry could record it twice.
+
+Repeats are caught by the ledger, not the model. The prompt used to say "never record the same entry twice", and live, the model skipped a payment the owner resent because the first one was never saved. Now `recordCredit` and `recordPayment` look for the same customer, kind and amount saved in the last 15 minutes and ask instead of saving. `confirmedNew` only counts if that question was really asked and the owner answered since: in testing the model set it on its own and saved a payment twice. Money paid beyond the udhaar is shown as an advance ("owes ₹0, ₹200 advance"), never a negative balance.
 
 ## Memory
 

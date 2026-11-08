@@ -72,9 +72,9 @@ const GENERAL_RULES = [RULES.credit, RULES.payment, RULES.link, RULES.qr, RULES.
 const CORE_RULES = [
   "Use tools for every fact about money or stock. Never guess balances or invent customers.",
   "Never say something is done, recorded, sent or ready unless a tool confirmed it in this conversation.",
-  "If a tool reports customer_not_found, ambiguous_customer, product_not_found or ambiguous_product, ask the owner a short question instead of guessing.",
+  "If a tool reports customer_not_found, ambiguous_customer, product_not_found, ambiguous_product or possible_repeat, ask the owner a short question instead of guessing.",
+  "Record every entry the owner reports, even if the chat has a similar message before: the tools check the ledger for repeats and tell you when to ask. Never skip an entry because of earlier messages.",
   "If the owner reports money or goods changing hands and you don't record it, say so plainly and ask. Never answer only the rest of the message.",
-  "Never record the same entry twice. If the owner repeats themselves, ask whether it is a new entry.",
 ];
 
 const messagingNote = (app: string) => `
