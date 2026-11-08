@@ -14,6 +14,7 @@ import { formatINR, type Language, rupeesToPaise } from "@munshi/db";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { ModelMessage } from "ai";
 import { buildKhataAgent } from "@/lib/agent";
+import { BILL_APPROVAL_PREFIX, decideBill, handleBillPhoto } from "@/lib/bills";
 import { createAdminClient } from "@/lib/supabase/admin";
 import type { ChannelSender, Inbound, LinkButton, MessagingChannel } from "./types";
 
@@ -23,7 +24,7 @@ const notLinked = (channel: MessagingChannel) =>
   `Namaste! This chat isn't linked to a Munshi shop yet. Open Munshi → Dashboard → Connect ${APP_NAME[channel]}.`;
 
 const HELP =
-  'Send me a voice note or a text in any language, like "Ramesh ne 450 ka saaman liya", "Fatima ne 200 diye" or "Kaun kaun udhaar pe hai?"';
+  'Send me a voice note or a text in any language, like "Ramesh ne 450 ka saaman liya", "Fatima ne 200 diye" or "Kaun kaun udhaar pe hai?" You can also send a photo of a supplier bill to update your stock.';
 
 /**
  * Handles one incoming chat message on any messaging channel. Runs after the webhook has
@@ -53,6 +54,16 @@ export async function handleInbound(inbound: Inbound, sender: ChannelSender) {
   if (error || !merchant) throw new Error(`Linked merchant missing: ${error?.message}`);
   const language = merchant.preferred_language as Language;
 
+  // Bills skip the agent entirely: their text is untrusted, so it must not reach the prompt.
+  if (inbound.kind === "image") {
+    return handleBillPhoto(admin, sender, { chatId, channel, merchantId: merchant.id, image: await inbound.download(), filename: inbound.filename });
+  }
+  if (inbound.kind === "decision" && inbound.approvalId.startsWith(BILL_APPROVAL_PREFIX)) {
+    const billId = inbound.approvalId.slice(BILL_APPROVAL_PREFIX.length);
+    await inbound.acknowledge?.(inbound.approved ? "approved" : "denied");
+    return sender.sendText(chatId, await decideBill(admin, merchant.id, billId, inbound.approved));
+  }
+
   const { data: thread } = await admin.from("agent_threads").select("messages").eq("merchant_id", merchant.id).eq("channel", channel).maybeSingle();
   let messages = (thread?.messages ?? []) as ModelMessage[];
   let replyLanguage: string | null = null; // set for voice notes: Munshi answers by voice too
@@ -80,7 +91,7 @@ export async function handleInbound(inbound: Inbound, sender: ChannelSender) {
       if (!text) return sender.sendText(chatId, "Couldn't hear that clearly. Please send the voice note again.");
       await sender.sendText(chatId, `🎤 ${text}`); // show what Munshi heard, so a mishearing is easy to spot
     } else {
-      return sender.sendText(chatId, `I understand texts and voice notes. I can't read photos or files yet. ${HELP}`);
+      return sender.sendText(chatId, `I understand texts, voice notes and photos of bills. ${HELP}`);
     }
     if (!text) return;
     messages = [...closePendingApprovals(messages), { role: "user", content: text }];

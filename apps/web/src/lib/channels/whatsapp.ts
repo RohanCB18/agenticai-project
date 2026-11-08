@@ -44,6 +44,7 @@ export type InboundMessage = {
   type: string;
   text?: { body: string };
   audio?: { id: string; mime_type: string; voice?: boolean };
+  image?: { id: string; mime_type: string };
   interactive?: { type: string; button_reply?: { id: string; title: string } };
 };
 
@@ -130,6 +131,10 @@ export function whatsappInbound(message: InboundMessage, profileName?: string): 
     const mediaId = message.audio.id;
     return { ...base, kind: "voice", filename: "voice-note.ogg", download: () => downloadMedia(mediaId) };
   }
+  if (message.type === "image" && message.image) {
+    const mediaId = message.image.id;
+    return { ...base, kind: "image", filename: "bill.jpg", download: () => downloadMedia(mediaId) };
+  }
   const decision = message.interactive?.button_reply ? parseDecisionPayload(message.interactive.button_reply.id) : null;
   if (decision) return { ...base, kind: "decision", ...decision };
   return { ...base, kind: "unsupported" };
@@ -153,7 +158,7 @@ export const whatsappSender: ChannelSender = {
     await send(to, { type: "image", image: { id, caption: caption.slice(0, 1024) } });
   },
 
-  async sendApproval(to, prompt, approvalId) {
+  async sendApproval(to, prompt, approvalId, labels = { yes: "Haan, bhejo", no: "Nahi" }) {
     await send(to, {
       type: "interactive",
       interactive: {
@@ -161,8 +166,8 @@ export const whatsappSender: ChannelSender = {
         body: { text: prompt.slice(0, 1024) },
         action: {
           buttons: [
-            { type: "reply", reply: { id: decisionPayload(approvalId, true), title: "Haan, bhejo" } },
-            { type: "reply", reply: { id: decisionPayload(approvalId, false), title: "Nahi" } },
+            { type: "reply", reply: { id: decisionPayload(approvalId, true), title: labels.yes.slice(0, 20) } },
+            { type: "reply", reply: { id: decisionPayload(approvalId, false), title: labels.no.slice(0, 20) } },
           ],
         },
       },

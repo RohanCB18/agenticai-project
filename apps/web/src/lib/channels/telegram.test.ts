@@ -31,6 +31,21 @@ describe("telegramInbound", () => {
     expect(inbound).toMatchObject({ kind: "voice", filename: "voice.ogg" });
   });
 
+  it("takes the largest size of a photo", () => {
+    const inbound = telegramInbound({
+      update_id: 8,
+      message: { message_id: 8, chat, from, photo: [{ file_id: "small", width: 90, height: 90 }, { file_id: "big", width: 1280, height: 960 }] },
+    });
+    expect(inbound).toMatchObject({ kind: "image", filename: "bill.jpg" });
+  });
+
+  it("accepts a bill sent as an image or PDF file, not other files", () => {
+    const send = (mime_type: string) => telegramInbound({ update_id: 9, message: { message_id: 9, chat, from, document: { file_id: "f", file_name: "bill.pdf", mime_type } } });
+    expect(send("application/pdf")).toMatchObject({ kind: "image", filename: "bill.pdf" });
+    expect(send("image/png")).toMatchObject({ kind: "image" });
+    expect(send("application/zip")).toMatchObject({ kind: "unsupported" });
+  });
+
   it("reads approval taps", () => {
     const inbound = telegramInbound({
       update_id: 5,

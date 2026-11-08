@@ -69,10 +69,12 @@ async function downloadFile(fileId: string, mimeType: string): Promise<Blob> {
 type Chat = { id: number; type: string };
 type User = { id: number; first_name?: string; last_name?: string; username?: string };
 type AudioFile = { file_id: string; mime_type?: string; file_size?: number };
+type PhotoSize = { file_id: string; width: number; height: number; file_size?: number };
+type DocumentFile = { file_id: string; file_name?: string; mime_type?: string; file_size?: number };
 
 export type TelegramUpdate = {
   update_id: number;
-  message?: { message_id: number; chat: Chat; from?: User; text?: string; voice?: AudioFile; audio?: AudioFile };
+  message?: { message_id: number; chat: Chat; from?: User; text?: string; voice?: AudioFile; audio?: AudioFile; photo?: PhotoSize[]; document?: DocumentFile };
   callback_query?: { id: string; from: User; data?: string; message?: { message_id: number; chat: Chat; text?: string } };
 };
 
@@ -93,6 +95,15 @@ export function telegramInbound(update: TelegramUpdate): Inbound | null {
     if (audio) {
       const mimeType = audio.mime_type ?? "audio/ogg";
       return { ...common, kind: "voice", filename: mimeType.includes("mpeg") ? "voice.mp3" : "voice.ogg", download: () => downloadFile(audio.file_id, mimeType) };
+    }
+    // Telegram sends each photo in several sizes; bills need the sharpest one.
+    const photo = message.photo?.at(-1);
+    if (photo) return { ...common, kind: "image", filename: "bill.jpg", download: () => downloadFile(photo.file_id, "image/jpeg") };
+    // A photo sent "as a file" keeps full quality. Document AI also reads PDFs.
+    const file = message.document;
+    if (file?.mime_type && /^(image\/(jpeg|png)|application\/pdf)$/.test(file.mime_type)) {
+      const mimeType = file.mime_type;
+      return { ...common, kind: "image", filename: file.file_name ?? "bill", download: () => downloadFile(file.file_id, mimeType) };
     }
     return { ...common, kind: "unsupported" };
   }
@@ -147,15 +158,15 @@ export const telegramSender: ChannelSender = {
     await call("sendPhoto", form);
   },
 
-  async sendApproval(chatId, prompt, approvalId) {
+  async sendApproval(chatId, prompt, approvalId, labels = { yes: "✅ Haan, bhejo", no: "❌ Nahi" }) {
     await call("sendMessage", {
       chat_id: chatId,
       text: prompt,
       reply_markup: {
         inline_keyboard: [
           [
-            { text: "✅ Haan, bhejo", callback_data: decisionPayload(approvalId, true), style: "success" },
-            { text: "❌ Nahi", callback_data: decisionPayload(approvalId, false), style: "danger" },
+            { text: labels.yes, callback_data: decisionPayload(approvalId, true), style: "success" },
+            { text: labels.no, callback_data: decisionPayload(approvalId, false), style: "danger" },
           ],
         ],
       },

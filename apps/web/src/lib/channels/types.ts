@@ -18,12 +18,14 @@ export type Inbound = InboundBase &
   (
     | { kind: "text"; text: string }
     | { kind: "voice"; download: () => Promise<Blob>; filename: string }
+    | { kind: "image"; download: () => Promise<Blob>; filename: string }
     | { kind: "decision"; approvalId: string; approved: boolean; acknowledge?: (result: DecisionResult) => Promise<void> }
     | { kind: "link"; code: string }
     | { kind: "unsupported" }
   );
 
 export type LinkButton = { text: string; url: string };
+export type ApprovalLabels = { yes: string; no: string };
 
 export interface ChannelSender {
   sendText(chatId: string, text: string, buttons?: LinkButton[]): Promise<void>;
@@ -32,7 +34,7 @@ export interface ChannelSender {
   /** Sends a PNG, used for the in-shop payment QR. */
   sendPhoto(chatId: string, png: Uint8Array, caption: string): Promise<void>;
   /** Sends Haan / Nahi buttons that come back as a "decision" inbound for `approvalId`. */
-  sendApproval(chatId: string, prompt: string, approvalId: string): Promise<void>;
+  sendApproval(chatId: string, prompt: string, approvalId: string, labels?: ApprovalLabels): Promise<void>;
   /** Optional "typing…" / "recording voice…" indicator while Munshi works. */
   showWorking?(chatId: string, kind: "typing" | "voice"): Promise<void>;
 }
