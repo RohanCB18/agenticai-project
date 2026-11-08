@@ -41,7 +41,7 @@ const toProduct = (r: ProductRow): Product => ({
  * also scopes every query; channels with no browser session (WhatsApp) pass the admin client.
  * Every query filters by merchant explicitly so the store is safe with either.
  */
-export function createSupabaseKhataStore(db: SupabaseClient, merchantId: string, opts: { source: "chat" | "voice" | "telegram" | "whatsapp"; traceId?: string }): KhataStore {
+export function createSupabaseKhataStore(db: SupabaseClient, merchantId: string, opts: { source: "chat" | "voice" | "telegram" | "whatsapp"; traceId?: string; actor?: string }): KhataStore {
   /** A failed cancel is logged, never fatal: the entry or new request matters more. */
   async function closeOpenRequests(customerId: string) {
     try {
@@ -50,6 +50,8 @@ export function createSupabaseKhataStore(db: SupabaseClient, merchantId: string,
       console.warn("[munshi] couldn't close open payment requests:", error instanceof Error ? error.message : error);
     }
   }
+
+  const actor = opts.actor ?? "khata-agent"; // who asked for a write, for approvals and the audit log
 
   const store: KhataStore = {
     async listCustomers() {
@@ -134,7 +136,7 @@ export function createSupabaseKhataStore(db: SupabaseClient, merchantId: string,
             summary: `Payment link for ₹${amountPaise / 100} to ${customer.name}`,
             payload: { customerId: customer.id, amountPaise },
             amount_paise: amountPaise,
-            requested_by: "khata-agent",
+            requested_by: actor,
             trace_id: opts.traceId,
           })
           .select("id")
@@ -251,7 +253,7 @@ export function createSupabaseKhataStore(db: SupabaseClient, merchantId: string,
     },
 
     async audit(action, details) {
-      await db.from("audit_log").insert({ merchant_id: merchantId, actor: "khata-agent", action, details, trace_id: opts.traceId });
+      await db.from("audit_log").insert({ merchant_id: merchantId, actor, action, details, trace_id: opts.traceId });
     },
   };
   return store;

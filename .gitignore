@@ -18,6 +18,9 @@ __pycache__/
 .pytest_cache/
 .ruff_cache/
 
+# workflow runs from local development
+.workflow-data/
+
 # supabase
 supabase/.branches/
 supabase/.temp/

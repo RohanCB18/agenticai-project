@@ -23,7 +23,10 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { ModelMessage } from "ai";
 import { buildKhataAgent } from "@/lib/agent";
 import { BILL_APPROVAL_PREFIX, decideBill, handleBillPhoto } from "@/lib/bills";
+import { answerReminders, startReminders } from "@/lib/reminder-runs";
+import { paymentNote, whatsappButton } from "@/lib/reminders";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { ON_DEMAND_KEY, REMINDER_APPROVAL_PREFIX } from "@/workflows/reminder-hook";
 import type { ChannelSender, Inbound, LinkButton, MessagingChannel } from "./types";
 
 const APP_NAME: Record<MessagingChannel, string> = { telegram: "Telegram", whatsapp: "WhatsApp" };
@@ -32,7 +35,7 @@ const notLinked = (channel: MessagingChannel) =>
   `Namaste! This chat isn't linked to a Munshi shop yet. Open Munshi → Dashboard → Connect ${APP_NAME[channel]}.`;
 
 const HELP =
-  'Send me a voice note or a text in any language, like "Ramesh ne 450 ka saaman liya", "Fatima ne 200 diye" or "Kaun kaun udhaar pe hai?" You can also send a photo of a supplier bill to update your stock.';
+  'Send me a voice note or a text in any language, like "Ramesh ne 450 ka saaman liya", "Fatima ne 200 diye" or "Kaun kaun udhaar pe hai?" You can also send a photo of a supplier bill to update your stock, or /reminders to see who should pay you and send them payment links.';
 
 /**
  * Handles one incoming chat message on any messaging channel. Runs after the webhook has
@@ -71,6 +74,14 @@ export async function handleInbound(inbound: Inbound, sender: ChannelSender) {
     await inbound.acknowledge?.(inbound.approved ? "approved" : "denied");
     return sender.sendText(chatId, await decideBill(admin, merchant.id, billId, inbound.approved));
   }
+  // Reminder lists belong to a workflow run that is waiting for this tap.
+  if (inbound.kind === "decision" && inbound.approvalId.startsWith(REMINDER_APPROVAL_PREFIX)) {
+    const answered = await answerReminders(merchant.id, inbound.approvalId.slice(REMINDER_APPROVAL_PREFIX.length), inbound.approved);
+    await inbound.acknowledge?.(answered ? (inbound.approved ? "approved" : "denied") : "stale");
+    if (!answered) return sender.sendText(chatId, "That reminder list was already answered or has expired. Send /reminders for a fresh one.");
+    if (inbound.approved) await sender.showWorking?.(chatId, "typing");
+    return;
+  }
 
   const { data: thread } = await admin.from("agent_threads").select("messages").eq("merchant_id", merchant.id).eq("channel", channel).maybeSingle();
   let messages = (thread?.messages ?? []) as ModelMessage[];
@@ -90,6 +101,7 @@ export async function handleInbound(inbound: Inbound, sender: ChannelSender) {
     if (inbound.kind === "text") {
       text = inbound.text.trim();
       if (/^\/(start|help)\b/i.test(text)) return sender.sendText(chatId, `Munshi is ready for ${merchant.shop_name}. ${HELP}`);
+      if (/^\/reminders?\b/i.test(text)) return remindNow(sender, channel, chatId, merchant.id);
     } else if (inbound.kind === "voice") {
       const apiKey = process.env.SARVAM_API_KEY;
       if (!apiKey) throw new Error("SARVAM_API_KEY is missing");
@@ -152,8 +164,7 @@ export async function handleInbound(inbound: Inbound, sender: ChannelSender) {
     if (out.status !== "sent" || !out.url) continue;
     if (!reply.includes(out.url)) reply += `\n\nUPI link: ${out.url}`;
     const phone = await customerPhone(admin, merchant.id, out.customer);
-    const note = `Namaste ${out.customer ?? ""}, ${merchant.shop_name} ka ${out.amount ?? ""} baaki hai. UPI se yahan pay karein: ${out.url}`;
-    buttons.push({ text: `Send to ${out.customer ?? "customer"} on WhatsApp`, url: `https://wa.me/${phone ?? ""}?text=${encodeURIComponent(note)}` });
+    buttons.push(whatsappButton(out.customer ?? "customer", phone, paymentNote(out.customer ?? "", merchant.shop_name, out.amount ?? "", out.url)));
   }
 
   // In-shop QRs go out as an image, before the reply, so the customer can scan straight away.
@@ -193,6 +204,14 @@ async function linkAccount(admin: SupabaseClient, inbound: Inbound & { kind: "li
 
   const { data: merchant } = await admin.from("merchants").select("shop_name").eq("id", row.merchant_id).single();
   await sender.sendText(chatId, `✅ Linked to ${merchant?.shop_name ?? "your shop"}.\n\n${HELP}`);
+}
+
+/** /reminders: the same list as the evening one, right now. The workflow sends it. */
+async function remindNow(sender: ChannelSender, channel: MessagingChannel, chatId: string, merchantId: string) {
+  if (channel !== "telegram") return sender.sendText(chatId, "Udhaar reminders work on Telegram for now.");
+  await sender.showWorking?.(chatId, "typing");
+  const run = await startReminders({ merchantId, chatId, key: ON_DEMAND_KEY });
+  if (!run.started) await sender.sendText(chatId, "Your last reminder list is still waiting for an answer. Tap Haan or Nahi on it first.");
 }
 
 /** One log line per model run: steps, tools in order, how it ended. Enough to debug from Vercel's logs. */

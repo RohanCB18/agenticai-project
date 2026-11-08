@@ -19,7 +19,7 @@ export type PaymentHabits =
       lastPaidDaysAgo: number;
     };
 
-const weekday = (iso: string) => new Intl.DateTimeFormat("en-IN", { weekday: "long", timeZone: "Asia/Kolkata" }).format(new Date(iso));
+export const weekday = (iso: string) => new Intl.DateTimeFormat("en-IN", { weekday: "long", timeZone: "Asia/Kolkata" }).format(new Date(iso));
 
 export function paymentHabits(entries: LedgerEntry[], now = new Date()): PaymentHabits {
   const payments = entries

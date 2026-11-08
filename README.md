@@ -2,7 +2,7 @@
 
 A voice-first AI bookkeeper for Indian shops. A shop owner speaks in Kannada, Hindi, Tamil or Bengali; Munshi keeps the khata, collects udhaar over UPI, manages stock, pays suppliers and handles GST. Every rupee it moves waits for the owner's "haan".
 
-> Status: **Live at https://agenticai-project.vercel.app** (Cashfree sandbox). Phase 3 under way: bill photos, shop memory and specialist desks are done. A khata agent on Sarvam-105B (Claude as fallback) records udhaar, payments, sales and stock, and sends Cashfree UPI payment links after the owner approves. Paid links update the khata through a signed webhook. The owner can tap the mic and speak in any Indian language: Saaras v4 transcribes it (biased toward the shop's customer and product names), and Bulbul speaks the reply back in the same language. The same agent works over **Telegram**: link the shop in one tap, then send voice notes or texts and get spoken replies, with Haan / Nahi buttons for payment links. WhatsApp shares the same channel core and switches on with Meta keys. For a customer at the counter, Munshi shows an exact-amount UPI QR tied to their khata, so the payment lands on the right account by itself.
+> Status: **Live at https://agenticai-project.vercel.app** (Cashfree sandbox). Phase 3 under way: bill photos, shop memory, specialist desks and udhaar reminders (a durable Vercel Workflow) are done. A khata agent on Sarvam-105B (Claude as fallback) records udhaar, payments, sales and stock, and sends Cashfree UPI payment links after the owner approves. Paid links update the khata through a signed webhook. The owner can tap the mic and speak in any Indian language: Saaras v4 transcribes it (biased toward the shop's customer and product names), and Bulbul speaks the reply back in the same language. The same agent works over **Telegram**: link the shop in one tap, then send voice notes or texts and get spoken replies, with Haan / Nahi buttons for payment links. WhatsApp shares the same channel core and switches on with Meta keys. For a customer at the counter, Munshi shows an exact-amount UPI QR tied to their khata, so the payment lands on the right account by itself.
 
 ## How the agent works
 
@@ -105,6 +105,17 @@ A model can write "Ramesh ka 450 likh diya" without calling a tool. So on Telegr
 The opposite slip happens too: live, "Ramesh ne 200 diye, ab kitna baaki hai?" got only the balance back, and the 200 was never written down. When the owner's message reports money or goods changing hands, nothing was saved, and the reply doesn't ask about it, the reply ends with "📝 Nothing was recorded from this message." There is no automatic retry here: if the owner was asking about an old payment, a retry could record it twice.
 
 Repeats are caught by the ledger, not the model. The prompt used to say "never record the same entry twice", and live, the model skipped a payment the owner resent because the first one was never saved. Now `recordCredit` and `recordPayment` look for the same customer, kind and amount saved in the last 15 minutes and ask instead of saving. `confirmedNew` only counts if that question was really asked and the owner answered since: in testing the model set it on its own and saved a payment twice. Money paid beyond the udhaar is shown as an advance ("owes ₹0, ₹200 advance"), never a negative balance.
+
+## Udhaar reminders
+
+Every evening at 7 pm Munshi works out who should be reminded and asks the owner on Telegram before anything goes out. The owner can also send `/reminders` at any time.
+
+- **Who is due is plain code, not a model.** A customer is listed if they owe ₹50 or more, have no open link or QR, weren't asked in the last 3 days, and are late by their own habit ("usually pays every 5 days, last paid 8 days ago"), usually pay on this weekday, or have udhaar older than a week. At most 10, biggest first, each with its reason. The same ledger always gives the same list.
+- **Nothing goes out without "haan".** One message lists them with Haan / Nahi buttons. On "haan", Munshi makes one Cashfree link per customer for what they owe at that moment (they may have paid since the list went out) and replies with a WhatsApp button for each.
+- **A durable workflow waits for the tap.** Each run is a [Vercel Workflow](https://useworkflow.dev) (`apps/web/src/workflows/udhaar-reminders.ts`). Every step is recorded and retried on its own, and nothing runs while it waits for the owner (up to 12 hours). A crash or redeploy halfway through carries on from the last finished step instead of asking twice or making links twice.
+- **One list per shop per day.** Vercel Cron starts a run for each Telegram-linked shop. The run claims a hook token for the shop and the date as it is admitted, so a repeated cron call gets the existing run instead of a second list. The button carries only the date; the shop comes from the linked chat, so no one can answer another shop's list.
+
+The cron needs `CRON_SECRET` in Vercel (Vercel Cron sends it as a Bearer token). `/reminders` works without it.
 
 ## Memory
 
