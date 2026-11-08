@@ -9,5 +9,9 @@
     "isolatedModules": true,
     "resolveJsonModule": true
   },
-  "include": ["src"]
+  "include": [
+    "src",
+    "evals",
+    "vitest.evals.config.ts"
+  ]
 }

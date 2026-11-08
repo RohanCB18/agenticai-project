@@ -1,47 +1,11 @@
 import type { LanguageModelV4 } from "@ai-sdk/provider";
 import type { Language } from "@munshi/db";
 import { isStepCount, type ModelMessage, ToolLoopAgent, type InferAgentUIMessage, wrapLanguageModel } from "ai";
+import { type Channel, type Desk, deskInstructions, deskTools, handedOffTo, handOffTool, justHandedOff, type Route, routeMessage } from "./desks";
 import type { KhataStore } from "./store";
 import { forgetOldToolResults } from "./threads";
 import { createKhataTools } from "./tools";
 import type { DetectedLanguage } from "./voice";
-
-const LANGUAGE_NAMES: Record<Language, string> = { kn: "Kannada", hi: "Hindi", ta: "Tamil", bn: "Bengali", en: "English" };
-
-export type Channel = "app" | "telegram" | "whatsapp";
-
-const messagingNote = (app: string) => `
-
-You are chatting with the owner on ${app}:
-- Plain text only: no markdown, tables, headings or links in brackets.
-- When a payment link is created, include the link in your reply so the owner can forward it to the customer.`;
-
-const CHANNEL_NOTES: Record<Channel, string> = { app: "", telegram: messagingNote("Telegram"), whatsapp: messagingNote("WhatsApp") };
-
-export function khataInstructions(shopName: string, language: Language, channel: Channel = "app"): string {
-  return `You are Munshi, the bookkeeper (munshi) of "${shopName}", a small Indian shop. You keep the khata: udhaar (store credit), payments, sales, expenses and stock.
-
-How to talk:
-- Reply in the language and script of the owner's LATEST message, even if earlier messages were in another language. Owners switch languages mid-chat; follow them every time. If unclear, use ${LANGUAGE_NAMES[language]}.
-- Owners often write Indian languages in English letters. Reply the same way, never in Hinglish unless they wrote Hinglish:
-  - Kannada (avru, togondru, kottru, eshtu, ide, baaki ide): "Ramesh avru 450 saaman togondru" gets "Ramesh ge 450 udhaar bardide. Eega 450 baaki ide."
-  - Tamil (avaru, vaangunaar, evvalavu, irukku): "Ramesh evvalavu baaki irukku?" gets "Ramesh ku 450 baaki irukku."
-  - Hinglish (ne, liya, diye, kitna, hai): "Ramesh ne 450 ka saaman liya" gets "Ramesh ka 450 udhaar likh diya."
-- Be brief: one or two short sentences, like a trusted shop assistant. Always say amounts in rupees.
-- Never mention tools, JSON or internal ids.
-
-How to work:
-- Use tools for every fact about money or stock. Never guess balances or invent customers.
-- Never say something is done, recorded, sent or ready unless a tool confirmed it in this conversation.
-- "X ne 450 ka saaman liya", "X took 450 on credit", "X ge 450 udhaar" means recordCredit.
-- "X ne 200 diye", "X paid 200" means recordPayment.
-- If a tool reports customer_not_found or ambiguous_customer, ask the owner a short question instead of guessing.
-- To collect dues over UPI, use sendPaymentLink. The owner will be asked to approve it. If they deny it, acknowledge and do not retry. If the tool returns a link, it is already approved, so never ask for approval again. If customerNotified is false, the customer has NOT been told: say the link is ready for the owner to forward, never that it was sent.
-- Any request for a QR ("QR dikhao", "X ka QR", "scan karega"), or a customer who is in the shop ("yahan khada hai"), means call showPaymentQr, without asking first or looking up the balance. Never offer a link when the owner asked for a QR. Only after it returns qr_ready, tell the owner the QR is on screen. If it reports qr_unavailable, offer a payment link.
-- "X ka payment aaya?" or "did X pay?" means checkPayment.
-- When the owner tells you a lasting fact or a preference ("Ramesh is Lakshmi's husband", "call me Akka", "Fatima pays on Saturdays"), save it with remember. Before answering about a customer's background, check recall and repeat what it says without adding to it: "the owner" in a fact means the person you are talking to, so say "your", and any other name is someone else. For payment patterns, use paymentHabits rather than memory or guesses.
-- Never record the same entry twice. If the owner repeats themselves, ask whether it is a new entry.${CHANNEL_NOTES[channel]}`;
-}
 
 const REPLY_LANGUAGES: Record<string, string> = {
   "hi-IN": "Hindi",
@@ -119,6 +83,10 @@ export type KhataAgentOptions = {
   detectLanguage?: (text: string) => Promise<DetectedLanguage | null>;
   /** One more closing note for this run, e.g. after a reply claimed an action no tool took. */
   extraNote?: string;
+  /** Route each message to a specialist desk (default). False runs one agent with every tool. */
+  specialists?: boolean;
+  /** Told which desk took the message, for logs and evals. */
+  onRoute?: (route: Route) => void;
 };
 
 const SHOP_FACTS_SHOWN = 12;
@@ -129,7 +97,7 @@ async function shopFactsNote(store: KhataStore) {
   return facts.length ? `What the owner asked you to remember about the shop:\n${facts.map((m) => `- ${m.fact}`).join("\n")}` : null;
 }
 
-export function createKhataAgent({ model, store, shopName, language, approvalSecret, channel, detectLanguage, extraNote }: KhataAgentOptions) {
+export function createKhataAgent({ model, store, shopName, language, approvalSecret, channel, detectLanguage, extraNote, specialists = true, onRoute }: KhataAgentOptions) {
   // One lookup per turn for each note; every step of the loop reuses it. Failures aren't fatal.
   let shopFacts: Promise<string | null> | undefined;
   let languageRule: Promise<string | null> | undefined;
@@ -141,37 +109,55 @@ export function createKhataAgent({ model, store, shopName, language, approvalSec
     })();
     return languageRule;
   };
+  let route: Promise<Route> | undefined;
+  const routeFor = (messages: ModelMessage[]) => {
+    route ??= specialists
+      ? routeMessage(model, messages, asksForQr(messages)).then((r) => (onRoute?.(r), r))
+      : Promise.resolve<Route>({ desk: "general", by: "fallback", ms: 0, tokens: 0 });
+    return route;
+  };
 
   return new ToolLoopAgent({
     model,
-    instructions: khataInstructions(shopName, language, channel),
-    tools: createKhataTools(store, shopName),
+    instructions: deskInstructions("general", shopName, language, channel),
+    tools: { ...createKhataTools(store, shopName), handOff: handOffTool },
     // Money only moves after the owner says yes; approvals are HMAC-signed so a
     // client cannot forge one.
     toolApproval: { sendPaymentLink: "user-approval" },
     experimental_toolApprovalSecret: approvalSecret,
     stopWhen: isStepCount(8),
-    // Force the tool for QR requests: in live testing the model said "QR ready" without calling
-    // it. An owner showing a customer a QR that doesn't exist is not something to leave to a prompt.
-    // (Sarvam rejects naming a tool in tool_choice, so offer only this tool and require a call.)
     prepareStep: async ({ stepNumber, messages }) => {
       // The model follows the recent chat over rules at the top of the prompt, so the reply
       // language and the freshness rule are the last thing it reads. The freshness rule stops once
       // this turn has a tool result: shown on every step, the model kept re-calling tools until the
-      // step limit and never answered.
-      const rule = await replyRule(messages);
+      // step limit and never answered. The desk, language and shop facts are looked up together.
       shopFacts ??= shopFactsNote(store).catch(() => null);
+      const [rule, facts, routed] = await Promise.all([replyRule(messages), shopFacts, routeFor(messages)]);
       const fresh = hasResultThisTurn(messages) ? null : FRESH_FIGURES_RULE;
-      const note = [await shopFacts, fresh, rule, extraNote].filter(Boolean).join("\n");
+      const note = [facts, fresh, rule, extraNote].filter(Boolean).join("\n");
+
+      // A desk that got the wrong message passes it on once; the turn then stays at that desk.
+      const handedOff = handedOffTo(messages);
+      const desk: Desk = handedOff ?? routed.desk;
+      // Force the tool for QR requests: in live testing the model said "QR ready" without calling
+      // it. An owner showing a customer a QR that doesn't exist is not something to leave to a prompt.
+      // (Sarvam rejects naming a tool in tool_choice, so offer only this tool and require a call.)
+      const forceQr = stepNumber === 0 && asksForQr(messages);
+      // A hand-off means a tool is needed, so the desk that receives it must call one.
+      const mustAct = forceQr || justHandedOff(messages);
       return {
         ...(note ? { model: withClosingNote(model, note) } : {}),
         // Without the old figures to copy, the model has to look them up again.
         ...(stepNumber === 0 ? { messages: forgetOldToolResults(messages) } : {}),
-        ...(stepNumber === 0 && asksForQr(messages) ? { activeTools: ["showPaymentQr" as const], toolChoice: "required" as const } : {}),
+        instructions: deskInstructions(desk, shopName, language, channel),
+        activeTools: forceQr ? ["showPaymentQr" as const] : deskTools(desk, !handedOff),
+        ...(mustAct ? { toolChoice: "required" as const } : {}),
       };
     },
   });
 }
 
 export type KhataAgent = ReturnType<typeof createKhataAgent>;
-export type KhataUIMessage = InferAgentUIMessage<KhataAgent>;
+/** Owner messages say if they were spoken; replies say which desk answered. */
+export type KhataMessageMetadata = { source?: "voice"; desk?: Desk };
+export type KhataUIMessage = InferAgentUIMessage<KhataAgent, KhataMessageMetadata>;

@@ -1,0 +1,1487 @@
+{
+  "summary": {
+    "label": "desks",
+    "runs": 78,
+    "passed": 78,
+    "heldOut": "24/24",
+    "wrongWrites": 0,
+    "errors": 0,
+    "medianMs": 2643,
+    "p90Ms": 4738,
+    "avgInputTokens": 5147,
+    "avgOutputTokens": 352,
+    "avgRouterMs": 201,
+    "handOffs": 0,
+    "routerFallbacks": 7,
+    "desks": {
+      "khata": 28,
+      "collections": 22,
+      "stock": 11,
+      "general": 17
+    }
+  },
+  "rows": [
+    {
+      "text": "Fatima ne 200 cash diye",
+      "expect": [
+        "recordPayment"
+      ],
+      "heldOut": false,
+      "called": [
+        "recordPayment"
+      ],
+      "wrongWrites": [],
+      "pass": true,
+      "desk": "khata",
+      "ms": 2602,
+      "routerMs": 567,
+      "routedBy": "model",
+      "inputTokens": 5118,
+      "outputTokens": 281,
+      "reply": "Fatima ne 200 rupaye cash diye. Ab Fatima ka 30 rupaye baaki hai."
+    },
+    {
+      "text": "Ramesh ne 450 ka saaman liya",
+      "expect": [
+        "recordCredit"
+      ],
+      "heldOut": false,
+      "called": [
+        "recordCredit"
+      ],
+      "wrongWrites": [],
+      "pass": true,
+      "desk": "khata",
+      "ms": 3327,
+      "routerMs": 477,
+      "routedBy": "model",
+      "inputTokens": 5117,
+      "outputTokens": 386,
+      "reply": "Ramesh ka 450 ka udhaar likh diya. Ab unka 900 baaki hai."
+    },
+    {
+      "text": "Fatima 100 rupayi kottru",
+      "expect": [
+        "recordPayment"
+      ],
+      "heldOut": false,
+      "called": [
+        "recordPayment"
+      ],
+      "wrongWrites": [],
+      "pass": true,
+      "desk": "collections",
+      "ms": 2104,
+      "routerMs": 201,
+      "routedBy": "model",
+      "inputTokens": 6017,
+      "outputTokens": 211,
+      "reply": "Fatima 100 kottru. Iga 130 baaki ide."
+    },
+    {
+      "text": "Ramesh avru 300 rupayi saaman togondru",
+      "expect": [
+        "recordCredit"
+      ],
+      "heldOut": false,
+      "called": [
+        "recordCredit"
+      ],
+      "wrongWrites": [],
+      "pass": true,
+      "desk": "khata",
+      "ms": 2872,
+      "routerMs": 276,
+      "routedBy": "model",
+      "inputTokens": 5179,
+      "outputTokens": 439,
+      "reply": "Ramesh ge 300 rupayi saaman udhaar bardide. Eega 750 rupayi baaki ide."
+    },
+    {
+      "text": "Aaj 1200 ki bikri hui",
+      "expect": [
+        "recordSale"
+      ],
+      "heldOut": false,
+      "called": [
+        "recordSale"
+      ],
+      "wrongWrites": [],
+      "pass": true,
+      "desk": "khata",
+      "ms": 1879,
+      "routerMs": 602,
+      "routedBy": "model",
+      "inputTokens": 5123,
+      "outputTokens": 210,
+      "reply": "Aaj 1200 ki bikri record ho gayi."
+    },
+    {
+      "text": "रमेश ने 150 रुपये दिए",
+      "expect": [
+        "recordPayment"
+      ],
+      "heldOut": false,
+      "called": [
+        "recordPayment"
+      ],
+      "wrongWrites": [],
+      "pass": true,
+      "desk": "khata",
+      "ms": 2292,
+      "routerMs": 357,
+      "routedBy": "model",
+      "inputTokens": 5162,
+      "outputTokens": 258,
+      "reply": "रमेश ने 150 रुपये नकद जमा कर दिए। अब रमेश पर 300 रुपये बाकी हैं।"
+    },
+    {
+      "text": "Kitna udhaar baaki hai sabka?",
+      "expect": [
+        "getBalances"
+      ],
+      "heldOut": false,
+      "called": [
+        "getBalances"
+      ],
+      "wrongWrites": [],
+      "pass": true,
+      "desk": "khata",
+      "ms": 2297,
+      "routerMs": 219,
+      "routedBy": "model",
+      "inputTokens": 5093,
+      "outputTokens": 256,
+      "reply": "Ramesh ka 450 aur Fatima ka 230 udhaar baaki hai. Kul 680 hai."
+    },
+    {
+      "text": "Bijli ka bill 800 bhara",
+      "expect": [
+        "recordSale"
+      ],
+      "heldOut": false,
+      "called": [
+        "recordSale"
+      ],
+      "wrongWrites": [],
+      "pass": true,
+      "desk": "khata",
+      "ms": 3173,
+      "routerMs": 184,
+      "routedBy": "model",
+      "inputTokens": 5156,
+      "outputTokens": 426,
+      "reply": "Bijli ka bill 800 ka bhara darj kar diya."
+    },
+    {
+      "text": "Ramesh evvalavu baaki irukku?",
+      "expect": [
+        "getBalances"
+      ],
+      "heldOut": false,
+      "called": [
+        "getBalances"
+      ],
+      "wrongWrites": [],
+      "pass": true,
+      "desk": "khata",
+      "ms": 1863,
+      "routerMs": 199,
+      "routedBy": "model",
+      "inputTokens": 5068,
+      "outputTokens": 167,
+      "reply": "Ramesh ku ₹450 baaki irukku."
+    },
+    {
+      "text": "How much does Fatima owe?",
+      "expect": [
+        "getBalances"
+      ],
+      "heldOut": false,
+      "called": [
+        "getBalances"
+      ],
+      "wrongWrites": [],
+      "pass": true,
+      "desk": "khata",
+      "ms": 1588,
+      "routerMs": 180,
+      "routedBy": "model",
+      "inputTokens": 5054,
+      "outputTokens": 75,
+      "reply": "Fatima owes ₹230."
+    },
+    {
+      "text": "Ramesh ko payment link bhejo",
+      "expect": [
+        "sendPaymentLink"
+      ],
+      "heldOut": false,
+      "called": [
+        "sendPaymentLink"
+      ],
+      "wrongWrites": [],
+      "pass": true,
+      "desk": "collections",
+      "ms": 1208,
+      "routerMs": 176,
+      "routedBy": "model",
+      "inputTokens": 3133,
+      "outputTokens": 75,
+      "reply": ""
+    },
+    {
+      "text": "Send Ramesh a link to pay his dues",
+      "expect": [
+        "sendPaymentLink"
+      ],
+      "heldOut": false,
+      "called": [
+        "sendPaymentLink"
+      ],
+      "wrongWrites": [],
+      "pass": true,
+      "desk": "collections",
+      "ms": 1399,
+      "routerMs": 262,
+      "routedBy": "model",
+      "inputTokens": 3142,
+      "outputTokens": 109,
+      "reply": ""
+    },
+    {
+      "text": "Naya customer add karo, Suresh, number 9876543210",
+      "expect": [
+        "addCustomer"
+      ],
+      "heldOut": false,
+      "called": [
+        "addCustomer"
+      ],
+      "wrongWrites": [],
+      "pass": true,
+      "desk": "khata",
+      "ms": 2861,
+      "routerMs": 199,
+      "routedBy": "model",
+      "inputTokens": 5233,
+      "outputTokens": 334,
+      "reply": "Suresh no khata khuli gayo che, number 9876543210."
+    },
+    {
+      "text": "Fatima ka QR dikhao",
+      "expect": [
+        "showPaymentQr"
+      ],
+      "heldOut": false,
+      "called": [
+        "showPaymentQr"
+      ],
+      "wrongWrites": [],
+      "pass": true,
+      "desk": "collections",
+      "ms": 2549,
+      "routerMs": 0,
+      "routedBy": "qr",
+      "inputTokens": 4159,
+      "outputTokens": 302,
+      "reply": "Fatima ka QR screen par hai. ₹230 baaki hai, 20 minute tak valid hai."
+    },
+    {
+      "text": "Ramesh ka payment aaya?",
+      "expect": [
+        "checkPayment"
+      ],
+      "heldOut": false,
+      "called": [
+        "checkPayment"
+      ],
+      "wrongWrites": [],
+      "pass": true,
+      "desk": "collections",
+      "ms": 3276,
+      "routerMs": 171,
+      "routedBy": "model",
+      "inputTokens": 6148,
+      "outputTokens": 457,
+      "reply": "Ramesh ka payment nahi aaya. Unka abhi ₹450 baaki hai."
+    },
+    {
+      "text": "Did Fatima pay online?",
+      "expect": [
+        "checkPayment"
+      ],
+      "heldOut": false,
+      "called": [
+        "checkPayment"
+      ],
+      "wrongWrites": [],
+      "pass": true,
+      "desk": "collections",
+      "ms": 1711,
+      "routerMs": 167,
+      "routedBy": "model",
+      "inputTokens": 5961,
+      "outputTokens": 171,
+      "reply": "No, Fatima has not paid online yet. She still owes ₹230."
+    },
+    {
+      "text": "Fatima usually kab payment karti hai?",
+      "expect": [
+        "paymentHabits"
+      ],
+      "heldOut": false,
+      "called": [
+        "paymentHabits"
+      ],
+      "wrongWrites": [],
+      "pass": true,
+      "desk": "collections",
+      "ms": 1819,
+      "routerMs": 176,
+      "routedBy": "model",
+      "inputTokens": 5948,
+      "outputTokens": 179,
+      "reply": "Fatima se abhi sirf 1 payment hai, isliye pattern nahi pata."
+    },
+    {
+      "text": "Chawal kitna bacha hai?",
+      "expect": [
+        "getStock"
+      ],
+      "heldOut": false,
+      "called": [
+        "getStock"
+      ],
+      "wrongWrites": [],
+      "pass": true,
+      "desk": "stock",
+      "ms": 1978,
+      "routerMs": 189,
+      "routedBy": "model",
+      "inputTokens": 4029,
+      "outputTokens": 243,
+      "reply": "Chawal 50 kg bacha hai."
+    },
+    {
+      "text": "Akki eshtu ide?",
+      "expect": [
+        "getStock"
+      ],
+      "heldOut": false,
+      "called": [
+        "getStock"
+      ],
+      "wrongWrites": [],
+      "pass": true,
+      "desk": "stock",
+      "ms": 1636,
+      "routerMs": 188,
+      "routedBy": "model",
+      "inputTokens": 3997,
+      "outputTokens": 147,
+      "reply": "Akki 50 kg ide. Reorder level 10 kg ide, so stock sariyagi ide."
+    },
+    {
+      "text": "Kaunsa saaman khatam hone wala hai?",
+      "expect": [
+        "getStock"
+      ],
+      "heldOut": false,
+      "called": [
+        "getStock"
+      ],
+      "wrongWrites": [],
+      "pass": true,
+      "desk": "stock",
+      "ms": 2100,
+      "routerMs": 195,
+      "routedBy": "model",
+      "inputTokens": 4020,
+      "outputTokens": 230,
+      "reply": "Sugar khatam hone wala hai. Abhi 3 kg bacha hai, 5 kg par dobara mangwana padega."
+    },
+    {
+      "text": "10 packet Maggi aaya",
+      "expect": [
+        "updateStock"
+      ],
+      "heldOut": false,
+      "called": [
+        "updateStock"
+      ],
+      "wrongWrites": [],
+      "pass": true,
+      "desk": "stock",
+      "ms": 2846,
+      "routerMs": 191,
+      "routedBy": "model",
+      "inputTokens": 4020,
+      "outputTokens": 482,
+      "reply": "Maggi 10 packet stock-il cherthu. Ippol 22 packet und."
+    },
+    {
+      "text": "Sugar 5 kg bik gaya",
+      "expect": [
+        "updateStock"
+      ],
+      "heldOut": false,
+      "called": [
+        "updateStock"
+      ],
+      "wrongWrites": [],
+      "pass": true,
+      "desk": "stock",
+      "ms": 2437,
+      "routerMs": 161,
+      "routedBy": "model",
+      "inputTokens": 4024,
+      "outputTokens": 336,
+      "reply": "Sugar 5 kg bik gaya. Ab stock -2 kg dikh raha hai."
+    },
+    {
+      "text": "Yaad rakhna, Fatima Sunday ko dukaan nahi aati",
+      "expect": [
+        "remember"
+      ],
+      "heldOut": false,
+      "called": [
+        "remember"
+      ],
+      "wrongWrites": [],
+      "pass": true,
+      "desk": "general",
+      "ms": 2270,
+      "routerMs": 172,
+      "routedBy": "model",
+      "inputTokens": 7084,
+      "outputTokens": 283,
+      "reply": "Theek hai, Fatima Sunday ko dukaan nahi aati, ye yaad rakh liya."
+    },
+    {
+      "text": "Namaste",
+      "expect": [],
+      "heldOut": false,
+      "called": [],
+      "wrongWrites": [],
+      "pass": true,
+      "desk": "general",
+      "ms": 1194,
+      "routerMs": 147,
+      "routedBy": "model",
+      "inputTokens": 3660,
+      "outputTokens": 67,
+      "reply": "Namaste ji, Sri Ganesh Stores mein swagat hai. Bataiye, kya kaam hai?"
+    },
+    {
+      "text": "Ramesh ke baare mein kya yaad hai?",
+      "expect": [
+        "recall"
+      ],
+      "heldOut": false,
+      "called": [
+        "recall"
+      ],
+      "wrongWrites": [],
+      "pass": true,
+      "desk": "general",
+      "ms": 2496,
+      "routerMs": 193,
+      "routedBy": "model",
+      "inputTokens": 7041,
+      "outputTokens": 296,
+      "reply": "Ramesh Lakshmi ke pati hain, aapki padosi."
+    },
+    {
+      "text": "Thank you bhai",
+      "expect": [],
+      "heldOut": false,
+      "called": [],
+      "wrongWrites": [],
+      "pass": true,
+      "desk": "general",
+      "ms": 1089,
+      "routerMs": 127,
+      "routedBy": "model",
+      "inputTokens": 3662,
+      "outputTokens": 61,
+      "reply": "Koi baat nahi bhai, aur kuch chahiye toh bata dena."
+    },
+    {
+      "text": "Ramesh ne 200 diye, ab kitna baaki hai?",
+      "expect": [
+        "recordPayment"
+      ],
+      "heldOut": false,
+      "called": [
+        "recordPayment",
+        "getBalances"
+      ],
+      "wrongWrites": [],
+      "pass": true,
+      "desk": "khata",
+      "ms": 2994,
+      "routerMs": 249,
+      "routedBy": "model",
+      "inputTokens": 5236,
+      "outputTokens": 383,
+      "reply": "Ramesh ne ₹200 diye. Ab unka baaki ₹250 hai."
+    },
+    {
+      "text": "Lakshmi ne 650 ka udhaar liya",
+      "expect": [
+        "recordCredit"
+      ],
+      "heldOut": true,
+      "called": [
+        "recordCredit"
+      ],
+      "wrongWrites": [],
+      "pass": true,
+      "desk": "khata",
+      "ms": 2788,
+      "routerMs": 162,
+      "routedBy": "model",
+      "inputTokens": 5166,
+      "outputTokens": 421,
+      "reply": "Lakshmi ka 650 rupaye ka udhaar likh diya. Ab unka 650 baaki hai."
+    },
+    {
+      "text": "Ramesh paid 300 in cash today",
+      "expect": [
+        "recordPayment"
+      ],
+      "heldOut": true,
+      "called": [
+        "recordPayment"
+      ],
+      "wrongWrites": [],
+      "pass": true,
+      "desk": "khata",
+      "ms": 1980,
+      "routerMs": 194,
+      "routedBy": "model",
+      "inputTokens": 5187,
+      "outputTokens": 226,
+      "reply": "Ramesh ne 300 cash diye. Ab unka 150 baaki hai."
+    },
+    {
+      "text": "Doodh wale ko 1500 diye",
+      "expect": [
+        "recordSale"
+      ],
+      "heldOut": true,
+      "called": [
+        "recordSale"
+      ],
+      "wrongWrites": [],
+      "pass": true,
+      "desk": "khata",
+      "ms": 5542,
+      "routerMs": 174,
+      "routedBy": "model",
+      "inputTokens": 5880,
+      "outputTokens": 1024,
+      "reply": "Doodh wale ko 1500 rupaye kharch mein darj kar diya."
+    },
+    {
+      "text": "ಫಾತಿಮಾ 50 ರೂಪಾಯಿ ಕೊಟ್ಟರು",
+      "expect": [
+        "recordPayment"
+      ],
+      "heldOut": true,
+      "called": [
+        "findCustomer",
+        "recordPayment"
+      ],
+      "wrongWrites": [],
+      "pass": true,
+      "desk": "khata",
+      "ms": 7985,
+      "routerMs": 252,
+      "routedBy": "model",
+      "inputTokens": 9230,
+      "outputTokens": 1356,
+      "reply": "ಫಾತಿಮಾ ಅವ್ರು 50 ರೂಪಾಯಿ ಕೊಟ್ಟರು. ಈಗ ಅವರ ಬಾಕಿ 180 ರೂಪಾಯಿ ಇದೆ."
+    },
+    {
+      "text": "Sabse zyada udhaar kiska hai?",
+      "expect": [
+        "getBalances"
+      ],
+      "heldOut": true,
+      "called": [
+        "getBalances"
+      ],
+      "wrongWrites": [],
+      "pass": true,
+      "desk": "khata",
+      "ms": 2582,
+      "routerMs": 269,
+      "routedBy": "model",
+      "inputTokens": 5110,
+      "outputTokens": 345,
+      "reply": "Ramesh ka udhaar sabse zyada hai, ₹450 baaki hai. Fatima ka ₹230 baaki hai."
+    },
+    {
+      "text": "Fatima ko 230 ka link bhej do",
+      "expect": [
+        "sendPaymentLink"
+      ],
+      "heldOut": true,
+      "called": [
+        "sendPaymentLink"
+      ],
+      "wrongWrites": [],
+      "pass": true,
+      "desk": "collections",
+      "ms": 2400,
+      "routerMs": 174,
+      "routedBy": "model",
+      "inputTokens": 3143,
+      "outputTokens": 103,
+      "reply": ""
+    },
+    {
+      "text": "Ramesh ka phone number kya hai?",
+      "expect": [
+        "findCustomer"
+      ],
+      "heldOut": true,
+      "called": [
+        "findCustomer",
+        "recall"
+      ],
+      "wrongWrites": [],
+      "pass": true,
+      "desk": "general",
+      "ms": 4231,
+      "routerMs": 517,
+      "routedBy": "model",
+      "inputTokens": 7247,
+      "outputTokens": 555,
+      "reply": "Ramesh ka phone number +919800000001 hai."
+    },
+    {
+      "text": "Ramesh ko QR scan karna hai",
+      "expect": [
+        "showPaymentQr"
+      ],
+      "heldOut": true,
+      "called": [
+        "showPaymentQr"
+      ],
+      "wrongWrites": [],
+      "pass": true,
+      "desk": "collections",
+      "ms": 3203,
+      "routerMs": 0,
+      "routedBy": "qr",
+      "inputTokens": 4055,
+      "outputTokens": 215,
+      "reply": "Ramesh ka QR screen pe hai, ₹450 ke liye. 20 minute tak valid hai."
+    },
+    {
+      "text": "Has Ramesh paid the link yet?",
+      "expect": [
+        "checkPayment"
+      ],
+      "heldOut": true,
+      "called": [
+        "checkPayment"
+      ],
+      "wrongWrites": [],
+      "pass": true,
+      "desk": "collections",
+      "ms": 4504,
+      "routerMs": 172,
+      "routedBy": "model",
+      "inputTokens": 5974,
+      "outputTokens": 242,
+      "reply": "No, Ramesh has not paid yet. He still owes ₹450."
+    },
+    {
+      "text": "Maggi kitne packet hai?",
+      "expect": [
+        "getStock"
+      ],
+      "heldOut": true,
+      "called": [
+        "getStock"
+      ],
+      "wrongWrites": [],
+      "pass": true,
+      "desk": "general",
+      "ms": 2614,
+      "routerMs": 65,
+      "routedBy": "fallback",
+      "inputTokens": 6724,
+      "outputTokens": 297,
+      "reply": "Maggi ke 12 packet hain. Abhi low nahi hai."
+    },
+    {
+      "text": "Shukriya",
+      "expect": [],
+      "heldOut": true,
+      "called": [],
+      "wrongWrites": [],
+      "pass": true,
+      "desk": "general",
+      "ms": 1328,
+      "routerMs": 115,
+      "routedBy": "fallback",
+      "inputTokens": 3275,
+      "outputTokens": 152,
+      "reply": "Koi baat nahi, main hoon na. Bataiye, kya kaam hai?"
+    },
+    {
+      "text": "5 kg chawal aur aaya",
+      "expect": [
+        "updateStock"
+      ],
+      "heldOut": true,
+      "called": [
+        "updateStock"
+      ],
+      "wrongWrites": [],
+      "pass": true,
+      "desk": "stock",
+      "ms": 2762,
+      "routerMs": 551,
+      "routedBy": "model",
+      "inputTokens": 4157,
+      "outputTokens": 355,
+      "reply": "5 kg chawal ka stock badha diya gaya hai. Ab 55 kg chawal hai."
+    },
+    {
+      "text": "Ramesh ne 450 ka saaman liya",
+      "expect": [
+        "recordCredit"
+      ],
+      "heldOut": false,
+      "called": [
+        "recordCredit"
+      ],
+      "wrongWrites": [],
+      "pass": true,
+      "desk": "general",
+      "ms": 2900,
+      "routerMs": 59,
+      "routedBy": "fallback",
+      "inputTokens": 6690,
+      "outputTokens": 185,
+      "reply": "Ramesh ka 450 ka udhaar likh diya. Ab unka 900 baaki hai."
+    },
+    {
+      "text": "Fatima ne 200 cash diye",
+      "expect": [
+        "recordPayment"
+      ],
+      "heldOut": false,
+      "called": [
+        "recordPayment"
+      ],
+      "wrongWrites": [],
+      "pass": true,
+      "desk": "khata",
+      "ms": 4976,
+      "routerMs": 186,
+      "routedBy": "model",
+      "inputTokens": 5236,
+      "outputTokens": 633,
+      "reply": "Fatima ne 200 cash diye, ab unka 30 rupaye baaki hai."
+    },
+    {
+      "text": "Ramesh avru 300 rupayi saaman togondru",
+      "expect": [
+        "recordCredit"
+      ],
+      "heldOut": false,
+      "called": [
+        "recordCredit"
+      ],
+      "wrongWrites": [],
+      "pass": true,
+      "desk": "khata",
+      "ms": 4953,
+      "routerMs": 181,
+      "routedBy": "model",
+      "inputTokens": 5284,
+      "outputTokens": 479,
+      "reply": "Ramesh ge 300 udhaar bardide. Eega 750 baaki ide."
+    },
+    {
+      "text": "Fatima 100 rupayi kottru",
+      "expect": [
+        "recordPayment"
+      ],
+      "heldOut": false,
+      "called": [
+        "recordPayment"
+      ],
+      "wrongWrites": [],
+      "pass": true,
+      "desk": "collections",
+      "ms": 3255,
+      "routerMs": 158,
+      "routedBy": "model",
+      "inputTokens": 6138,
+      "outputTokens": 439,
+      "reply": "Fatima 100 rupayi kottru. Eega 130 rupayi baaki ide."
+    },
+    {
+      "text": "रमेश ने 150 रुपये दिए",
+      "expect": [
+        "recordPayment"
+      ],
+      "heldOut": false,
+      "called": [
+        "recordPayment"
+      ],
+      "wrongWrites": [],
+      "pass": true,
+      "desk": "khata",
+      "ms": 2379,
+      "routerMs": 163,
+      "routedBy": "model",
+      "inputTokens": 5131,
+      "outputTokens": 321,
+      "reply": "Ramesh ne 150 rupaye diye. Ab unka 300 rupaye baaki hai."
+    },
+    {
+      "text": "Aaj 1200 ki bikri hui",
+      "expect": [
+        "recordSale"
+      ],
+      "heldOut": false,
+      "called": [
+        "recordSale"
+      ],
+      "wrongWrites": [],
+      "pass": true,
+      "desk": "collections",
+      "ms": 1810,
+      "routerMs": 180,
+      "routedBy": "model",
+      "inputTokens": 5990,
+      "outputTokens": 161,
+      "reply": "Aaj ki 1200 ki bikri record ho gayi."
+    },
+    {
+      "text": "Kitna udhaar baaki hai sabka?",
+      "expect": [
+        "getBalances"
+      ],
+      "heldOut": false,
+      "called": [
+        "getBalances"
+      ],
+      "wrongWrites": [],
+      "pass": true,
+      "desk": "general",
+      "ms": 4050,
+      "routerMs": 105,
+      "routedBy": "fallback",
+      "inputTokens": 6658,
+      "outputTokens": 375,
+      "reply": "Ramesh ka 450 aur Fatima ka 230 udhaar baaki hai. Total 680 baaki hai."
+    },
+    {
+      "text": "Bijli ka bill 800 bhara",
+      "expect": [
+        "recordSale"
+      ],
+      "heldOut": false,
+      "called": [
+        "recordSale"
+      ],
+      "wrongWrites": [],
+      "pass": true,
+      "desk": "khata",
+      "ms": 4616,
+      "routerMs": 157,
+      "routedBy": "model",
+      "inputTokens": 5216,
+      "outputTokens": 335,
+      "reply": "Bijli ka bill 800 ka kharcha darj kar diya."
+    },
+    {
+      "text": "How much does Fatima owe?",
+      "expect": [
+        "getBalances"
+      ],
+      "heldOut": false,
+      "called": [
+        "getBalances"
+      ],
+      "wrongWrites": [],
+      "pass": true,
+      "desk": "khata",
+      "ms": 3178,
+      "routerMs": 161,
+      "routedBy": "model",
+      "inputTokens": 5053,
+      "outputTokens": 196,
+      "reply": "Fatima owes ₹230."
+    },
+    {
+      "text": "Ramesh evvalavu baaki irukku?",
+      "expect": [
+        "getBalances"
+      ],
+      "heldOut": false,
+      "called": [
+        "getBalances"
+      ],
+      "wrongWrites": [],
+      "pass": true,
+      "desk": "khata",
+      "ms": 4576,
+      "routerMs": 204,
+      "routedBy": "model",
+      "inputTokens": 5116,
+      "outputTokens": 335,
+      "reply": "Ramesh ku 450 roobai baaki irukku."
+    },
+    {
+      "text": "Ramesh ko payment link bhejo",
+      "expect": [
+        "sendPaymentLink"
+      ],
+      "heldOut": false,
+      "called": [
+        "sendPaymentLink"
+      ],
+      "wrongWrites": [],
+      "pass": true,
+      "desk": "collections",
+      "ms": 1335,
+      "routerMs": 218,
+      "routedBy": "model",
+      "inputTokens": 3133,
+      "outputTokens": 96,
+      "reply": ""
+    },
+    {
+      "text": "Send Ramesh a link to pay his dues",
+      "expect": [
+        "sendPaymentLink"
+      ],
+      "heldOut": false,
+      "called": [
+        "sendPaymentLink"
+      ],
+      "wrongWrites": [],
+      "pass": true,
+      "desk": "collections",
+      "ms": 2306,
+      "routerMs": 247,
+      "routedBy": "model",
+      "inputTokens": 3142,
+      "outputTokens": 83,
+      "reply": ""
+    },
+    {
+      "text": "Naya customer add karo, Suresh, number 9876543210",
+      "expect": [
+        "addCustomer"
+      ],
+      "heldOut": false,
+      "called": [
+        "addCustomer"
+      ],
+      "wrongWrites": [],
+      "pass": true,
+      "desk": "khata",
+      "ms": 5243,
+      "routerMs": 164,
+      "routedBy": "model",
+      "inputTokens": 5423,
+      "outputTokens": 858,
+      "reply": "Suresh nava customer tarike add thaya che. Number 9876543210 pan save karyu che."
+    },
+    {
+      "text": "Fatima ka QR dikhao",
+      "expect": [
+        "showPaymentQr"
+      ],
+      "heldOut": false,
+      "called": [
+        "showPaymentQr"
+      ],
+      "wrongWrites": [],
+      "pass": true,
+      "desk": "collections",
+      "ms": 1848,
+      "routerMs": 0,
+      "routedBy": "qr",
+      "inputTokens": 4077,
+      "outputTokens": 224,
+      "reply": "Fatima ka QR screen par hai. ₹230 ka hai, 20 minute tak valid hai."
+    },
+    {
+      "text": "Ramesh ka payment aaya?",
+      "expect": [
+        "checkPayment"
+      ],
+      "heldOut": false,
+      "called": [
+        "checkPayment"
+      ],
+      "wrongWrites": [],
+      "pass": true,
+      "desk": "collections",
+      "ms": 3251,
+      "routerMs": 205,
+      "routedBy": "model",
+      "inputTokens": 5994,
+      "outputTokens": 317,
+      "reply": "Nahi, Ramesh ka payment nahi aaya. Abhi bhi 450 rupaye udhaar baaki hai."
+    },
+    {
+      "text": "Did Fatima pay online?",
+      "expect": [
+        "checkPayment"
+      ],
+      "heldOut": false,
+      "called": [
+        "checkPayment"
+      ],
+      "wrongWrites": [],
+      "pass": true,
+      "desk": "collections",
+      "ms": 3191,
+      "routerMs": 204,
+      "routedBy": "model",
+      "inputTokens": 6029,
+      "outputTokens": 286,
+      "reply": "No, Fatima hasn't paid yet. She still owes ₹230."
+    },
+    {
+      "text": "Fatima usually kab payment karti hai?",
+      "expect": [
+        "paymentHabits"
+      ],
+      "heldOut": false,
+      "called": [
+        "paymentHabits"
+      ],
+      "wrongWrites": [],
+      "pass": true,
+      "desk": "collections",
+      "ms": 3080,
+      "routerMs": 224,
+      "routedBy": "model",
+      "inputTokens": 5979,
+      "outputTokens": 184,
+      "reply": "Fatima ka abhi itna record nahi hai ki pata chal sake ki woh kab payment karti hai. Jab aur payments aayenge tab pattern"
+    },
+    {
+      "text": "Chawal kitna bacha hai?",
+      "expect": [
+        "getStock"
+      ],
+      "heldOut": false,
+      "called": [
+        "getStock"
+      ],
+      "wrongWrites": [],
+      "pass": true,
+      "desk": "general",
+      "ms": 2643,
+      "routerMs": 79,
+      "routedBy": "fallback",
+      "inputTokens": 6662,
+      "outputTokens": 285,
+      "reply": "Rice 50 kg bacha hai. Abhi low nahi hai."
+    },
+    {
+      "text": "Kaunsa saaman khatam hone wala hai?",
+      "expect": [
+        "getStock"
+      ],
+      "heldOut": false,
+      "called": [
+        "getStock"
+      ],
+      "wrongWrites": [],
+      "pass": true,
+      "desk": "general",
+      "ms": 3107,
+      "routerMs": 69,
+      "routedBy": "fallback",
+      "inputTokens": 6668,
+      "outputTokens": 185,
+      "reply": "Sugar khatam hone wala hai, 3 kg baaki hai."
+    },
+    {
+      "text": "Akki eshtu ide?",
+      "expect": [
+        "getStock"
+      ],
+      "heldOut": false,
+      "called": [
+        "getStock"
+      ],
+      "wrongWrites": [],
+      "pass": true,
+      "desk": "stock",
+      "ms": 4629,
+      "routerMs": 336,
+      "routedBy": "model",
+      "inputTokens": 4032,
+      "outputTokens": 523,
+      "reply": "Akki 50 kg ide. Stock sariyagi ide, 10 kg kinta kammi illa."
+    },
+    {
+      "text": "Sugar 5 kg bik gaya",
+      "expect": [
+        "updateStock"
+      ],
+      "heldOut": false,
+      "called": [
+        "updateStock"
+      ],
+      "wrongWrites": [],
+      "pass": true,
+      "desk": "stock",
+      "ms": 4496,
+      "routerMs": 186,
+      "routedBy": "model",
+      "inputTokens": 4198,
+      "outputTokens": 815,
+      "reply": "Sugar 5 kg bik gaya. Ab stock -2 kg hai. Kitne rupaye ka tha, bataiye taaki main sale record kar sakoon."
+    },
+    {
+      "text": "Yaad rakhna, Fatima Sunday ko dukaan nahi aati",
+      "expect": [
+        "remember"
+      ],
+      "heldOut": false,
+      "called": [
+        "remember"
+      ],
+      "wrongWrites": [],
+      "pass": true,
+      "desk": "general",
+      "ms": 2277,
+      "routerMs": 254,
+      "routedBy": "model",
+      "inputTokens": 7100,
+      "outputTokens": 262,
+      "reply": "Theek hai, yaad rakh diya. Fatima Sunday ko dukaan nahi aati."
+    },
+    {
+      "text": "Ramesh ke baare mein kya yaad hai?",
+      "expect": [
+        "recall"
+      ],
+      "heldOut": false,
+      "called": [
+        "recall"
+      ],
+      "wrongWrites": [],
+      "pass": true,
+      "desk": "general",
+      "ms": 2893,
+      "routerMs": 190,
+      "routedBy": "model",
+      "inputTokens": 7050,
+      "outputTokens": 357,
+      "reply": "Ramesh, Lakshmi ke pati hain, jo aapke padosi hain."
+    },
+    {
+      "text": "10 packet Maggi aaya",
+      "expect": [
+        "updateStock"
+      ],
+      "heldOut": false,
+      "called": [
+        "updateStock"
+      ],
+      "wrongWrites": [],
+      "pass": true,
+      "desk": "stock",
+      "ms": 11464,
+      "routerMs": 205,
+      "routedBy": "model",
+      "inputTokens": 6088,
+      "outputTokens": 2333,
+      "reply": "10 packet Maggi stock-il add cheythu. Ippo 22 packet und."
+    },
+    {
+      "text": "Namaste",
+      "expect": [],
+      "heldOut": false,
+      "called": [],
+      "wrongWrites": [],
+      "pass": true,
+      "desk": "general",
+      "ms": 1834,
+      "routerMs": 244,
+      "routedBy": "model",
+      "inputTokens": 3660,
+      "outputTokens": 198,
+      "reply": "Namaste! Bataiye, aaj kya kaam hai?"
+    },
+    {
+      "text": "Thank you bhai",
+      "expect": [],
+      "heldOut": false,
+      "called": [],
+      "wrongWrites": [],
+      "pass": true,
+      "desk": "general",
+      "ms": 1186,
+      "routerMs": 197,
+      "routedBy": "model",
+      "inputTokens": 3662,
+      "outputTokens": 83,
+      "reply": "Koi baat nahi, bhai. Sri Ganesh Stores ke liye aur kuch chahiye?"
+    },
+    {
+      "text": "Lakshmi ne 650 ka udhaar liya",
+      "expect": [
+        "recordCredit"
+      ],
+      "heldOut": true,
+      "called": [
+        "recordCredit"
+      ],
+      "wrongWrites": [],
+      "pass": true,
+      "desk": "khata",
+      "ms": 2965,
+      "routerMs": 171,
+      "routedBy": "model",
+      "inputTokens": 5385,
+      "outputTokens": 482,
+      "reply": "Lakshmi ka 650 rupaye ka udhaar likh diya. Ab unka total 650 rupaye baaki hai."
+    },
+    {
+      "text": "Ramesh ne 200 diye, ab kitna baaki hai?",
+      "expect": [
+        "recordPayment"
+      ],
+      "heldOut": false,
+      "called": [
+        "recordPayment",
+        "getBalances"
+      ],
+      "wrongWrites": [],
+      "pass": true,
+      "desk": "khata",
+      "ms": 3615,
+      "routerMs": 153,
+      "routedBy": "model",
+      "inputTokens": 5279,
+      "outputTokens": 585,
+      "reply": "Ramesh ka 250 rupaye baaki hai."
+    },
+    {
+      "text": "ಫಾತಿಮಾ 50 ರೂಪಾಯಿ ಕೊಟ್ಟರು",
+      "expect": [
+        "recordPayment"
+      ],
+      "heldOut": true,
+      "called": [
+        "recordPayment"
+      ],
+      "wrongWrites": [],
+      "pass": true,
+      "desk": "collections",
+      "ms": 2015,
+      "routerMs": 297,
+      "routedBy": "model",
+      "inputTokens": 6006,
+      "outputTokens": 195,
+      "reply": "ಫಾತಿಮಾ 50 ರೂಪಾಯಿ ಕೊಟ್ಟರು. ಈಗ ಅವರಿಗೆ 180 ರೂಪಾಯಿ ಬಾಕಿ ಇದೆ."
+    },
+    {
+      "text": "Ramesh paid 300 in cash today",
+      "expect": [
+        "recordPayment"
+      ],
+      "heldOut": true,
+      "called": [
+        "recordPayment"
+      ],
+      "wrongWrites": [],
+      "pass": true,
+      "desk": "khata",
+      "ms": 2167,
+      "routerMs": 175,
+      "routedBy": "model",
+      "inputTokens": 5128,
+      "outputTokens": 285,
+      "reply": "Ramesh paid 300 cash. He now owes 150."
+    },
+    {
+      "text": "Sabse zyada udhaar kiska hai?",
+      "expect": [
+        "getBalances"
+      ],
+      "heldOut": true,
+      "called": [
+        "getBalances"
+      ],
+      "wrongWrites": [],
+      "pass": true,
+      "desk": "khata",
+      "ms": 3140,
+      "routerMs": 209,
+      "routedBy": "model",
+      "inputTokens": 5128,
+      "outputTokens": 415,
+      "reply": "Ramesh ka sabse zyada udhaar hai — ₹450."
+    },
+    {
+      "text": "Ramesh ka phone number kya hai?",
+      "expect": [
+        "findCustomer"
+      ],
+      "heldOut": true,
+      "called": [
+        "findCustomer"
+      ],
+      "wrongWrites": [],
+      "pass": true,
+      "desk": "general",
+      "ms": 1949,
+      "routerMs": 161,
+      "routedBy": "model",
+      "inputTokens": 7056,
+      "outputTokens": 177,
+      "reply": "Ramesh ka phone number +919800000001 hai."
+    },
+    {
+      "text": "Doodh wale ko 1500 diye",
+      "expect": [
+        "recordSale"
+      ],
+      "heldOut": true,
+      "called": [
+        "recordSale"
+      ],
+      "wrongWrites": [],
+      "pass": true,
+      "desk": "khata",
+      "ms": 5696,
+      "routerMs": 156,
+      "routedBy": "model",
+      "inputTokens": 5735,
+      "outputTokens": 1126,
+      "reply": "Doodh wale ko ₹1500 ka expense record kar diya gaya hai."
+    },
+    {
+      "text": "Fatima ko 230 ka link bhej do",
+      "expect": [
+        "sendPaymentLink"
+      ],
+      "heldOut": true,
+      "called": [
+        "sendPaymentLink"
+      ],
+      "wrongWrites": [],
+      "pass": true,
+      "desk": "collections",
+      "ms": 1200,
+      "routerMs": 186,
+      "routedBy": "model",
+      "inputTokens": 3143,
+      "outputTokens": 105,
+      "reply": ""
+    },
+    {
+      "text": "Has Ramesh paid the link yet?",
+      "expect": [
+        "checkPayment"
+      ],
+      "heldOut": true,
+      "called": [
+        "checkPayment"
+      ],
+      "wrongWrites": [],
+      "pass": true,
+      "desk": "collections",
+      "ms": 1472,
+      "routerMs": 174,
+      "routedBy": "model",
+      "inputTokens": 5956,
+      "outputTokens": 114,
+      "reply": "Ramesh has not paid yet. He still owes ₹450."
+    },
+    {
+      "text": "Ramesh ko QR scan karna hai",
+      "expect": [
+        "showPaymentQr"
+      ],
+      "heldOut": true,
+      "called": [
+        "showPaymentQr"
+      ],
+      "wrongWrites": [],
+      "pass": true,
+      "desk": "collections",
+      "ms": 4738,
+      "routerMs": 0,
+      "routedBy": "qr",
+      "inputTokens": 4088,
+      "outputTokens": 244,
+      "reply": "Ramesh ka QR screen par hai. 450 rupaye ke liye 20 minute tak valid hai."
+    },
+    {
+      "text": "Maggi kitne packet hai?",
+      "expect": [
+        "getStock"
+      ],
+      "heldOut": true,
+      "called": [
+        "getStock"
+      ],
+      "wrongWrites": [],
+      "pass": true,
+      "desk": "stock",
+      "ms": 3776,
+      "routerMs": 196,
+      "routedBy": "model",
+      "inputTokens": 4026,
+      "outputTokens": 504,
+      "reply": "Maggi ke 12 packet hain. Abhi theek stock hai."
+    },
+    {
+      "text": "Shukriya",
+      "expect": [],
+      "heldOut": true,
+      "called": [],
+      "wrongWrites": [],
+      "pass": true,
+      "desk": "general",
+      "ms": 1472,
+      "routerMs": 71,
+      "routedBy": "fallback",
+      "inputTokens": 3275,
+      "outputTokens": 144,
+      "reply": "Koi baat nahi, main yahin hoon agar kuch chahiye ho."
+    },
+    {
+      "text": "5 kg chawal aur aaya",
+      "expect": [
+        "updateStock"
+      ],
+      "heldOut": true,
+      "called": [
+        "updateStock"
+      ],
+      "wrongWrites": [],
+      "pass": true,
+      "desk": "stock",
+      "ms": 3074,
+      "routerMs": 280,
+      "routedBy": "model",
+      "inputTokens": 4084,
+      "outputTokens": 381,
+      "reply": "5 kg chawal stock mein aa gaya hai. Ab 55 kg chawal hai."
+    }
+  ]
+}

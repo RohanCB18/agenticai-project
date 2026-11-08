@@ -1,4 +1,4 @@
-import { MissingModelKeyError } from "@munshi/agents";
+import { type Desk, MissingModelKeyError } from "@munshi/agents";
 import { createAgentUIStreamResponse } from "ai";
 import { ApprovalSecretMissingError, buildKhataAgent } from "@/lib/agent";
 import { createClient } from "@/lib/supabase/server";
@@ -19,11 +19,13 @@ export async function POST(request: Request) {
   const source = lastUser?.metadata?.source === "voice" ? "voice" : "chat";
 
   let agent;
+  let desk: Desk | undefined;
   try {
     agent = buildKhataAgent({
       db: supabase,
       merchant: { id: merchant.id, shopName: merchant.shop_name, language: merchant.preferred_language },
       source,
+      onRoute: (route) => void (desk = route.desk),
     });
   } catch (error) {
     if (error instanceof ApprovalSecretMissingError || error instanceof MissingModelKeyError) {
@@ -35,6 +37,8 @@ export async function POST(request: Request) {
   return createAgentUIStreamResponse({
     agent,
     uiMessages: messages,
+    // The chat shows which desk answered.
+    messageMetadata: ({ part }) => (part.type === "finish" && desk ? { desk } : undefined),
     // Tool and stream errors are masked as "An error occurred." by default. Log the real
     // cause, and show it in the chat during development so failures are debuggable.
     onError: (error) => {

@@ -7,6 +7,8 @@ import { useEffect, useRef, useState } from "react";
 import { ToolPart } from "./tool-part";
 import { useVoice } from "./use-voice";
 
+const DESK_LABELS = { khata: "Khata desk", collections: "Collections desk", stock: "Stock desk", general: "Munshi" } as const;
+
 const SUGGESTIONS = [
   "Ramesh ne 450 ka saaman liya",
   "ಫಾತಿಮಾ ಎಷ್ಟು ಬಾಕಿ ಇದೆ?",
@@ -98,6 +100,9 @@ export function Chat() {
               }
               return null;
             })}
+            {message.role === "assistant" && message.metadata?.desk && message.metadata.desk !== "general" && (
+              <p className="text-xs uppercase tracking-wider text-muted">{DESK_LABELS[message.metadata.desk]}</p>
+            )}
           </div>
         ))}
 

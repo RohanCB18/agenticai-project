@@ -59,6 +59,7 @@ describe("reply language", () => {
       store,
       shopName: "Test",
       language: "hi",
+      specialists: false,
       detectLanguage: async () => (detections++, { languageCode: "kn-IN", scriptCode: "Latn" }),
     });
 
@@ -82,7 +83,7 @@ describe("reply language", () => {
         return steps[notes.length - 1]!;
       },
     });
-    const agent = createKhataAgent({ model, store, shopName: "Test", language: "hi" });
+    const agent = createKhataAgent({ model, store, shopName: "Test", language: "hi", specialists: false });
     await agent.generate({ messages: [{ role: "user", content: "Ramesh ka kitna baaki hai?" }] });
 
     expect(notes[0]).toContain(FRESH_FIGURES_RULE);
@@ -166,6 +167,7 @@ describe("khata agent loop", () => {
       store,
       shopName: "Test Stores",
       language: "hi",
+      specialists: false,
     });
 
     const result = await agent.generate({ prompt: "Ramesh ne 450 ka saaman liya" });
@@ -183,6 +185,7 @@ describe("khata agent loop", () => {
       store,
       shopName: "Test Stores",
       language: "hi",
+      specialists: false,
     });
 
     const result = await agent.generate({ prompt: "Ramesh ko payment link bhejo" });
@@ -202,11 +205,71 @@ describe("Sarvam to Claude fallback", () => {
     const claude = scripted(text("fallback answer"));
     const errors: unknown[] = [];
     const store = await seededStore();
-    const agent = createKhataAgent({ model: withFallback(sarvam, claude, (e) => errors.push(e)), store, shopName: "T", language: "en" });
+    const agent = createKhataAgent({ model: withFallback(sarvam, claude, (e) => errors.push(e)), store, shopName: "T", language: "en", specialists: false });
 
     const result = await agent.generate({ prompt: "hello" });
 
     expect(result.text).toBe("fallback answer");
     expect(errors).toHaveLength(1);
+  });
+});
+
+describe("specialist desks", () => {
+  /** A model that answers the router with `desk` and plays `steps` for the desk agent. */
+  function deskModel(desk: string, steps: LanguageModelV4GenerateResult[]) {
+    const seen: { tools: string[]; instructions: string; toolChoice: unknown }[] = [];
+    const model = new MockLanguageModelV4({
+      doGenerate: async (options) => {
+        const system = options.prompt[0]?.role === "system" ? options.prompt[0].content : "";
+        if (system.startsWith("You route")) return text(desk);
+        seen.push({ tools: (options.tools ?? []).map((t) => t.name).sort(), instructions: system, toolChoice: options.toolChoice });
+        return steps[seen.length - 1]!;
+      },
+    });
+    return { model, seen };
+  }
+
+  it("gives the routed desk only its own tools and rules", async () => {
+    const store = await seededStore();
+    const { model, seen } = deskModel("stock", [toolCall("getStock", {}), text("Chawal 50 kg hai")]);
+    const routes: string[] = [];
+    const agent = createKhataAgent({ model, store, shopName: "Test", language: "hi", onRoute: (r) => routes.push(r.desk) });
+    await agent.generate({ messages: [{ role: "user", content: "Chawal kitna hai?" }] });
+
+    expect(routes).toEqual(["stock"]);
+    expect(seen[0]?.tools).toEqual(["forget", "getStock", "handOff", "recall", "recordSale", "remember", "updateStock"]);
+    expect(seen[0]?.instructions).toContain("stock desk");
+    expect(seen[0]?.instructions).not.toContain("sendPaymentLink");
+  });
+
+  it("lets a desk hand a message on once, then works with the new desk's tools", async () => {
+    const store = await seededStore();
+    const { model, seen } = deskModel("stock", [
+      toolCall("handOff", { desk: "khata" }),
+      toolCall("recordCredit", { customerName: "Ramesh", amount: 450 }),
+      text("Ramesh ka 450 likh diya"),
+    ]);
+    const agent = createKhataAgent({ model, store, shopName: "Test", language: "hi" });
+    await agent.generate({ messages: [{ role: "user", content: "Ramesh ne 450 ka saaman liya" }] });
+
+    expect(seen[1]?.tools).toContain("recordCredit");
+    expect(seen[1]?.tools).not.toContain("handOff"); // no passing it around in circles
+    expect(seen[1]?.toolChoice).toEqual({ type: "required" }); // the new desk acts, it doesn't just reply
+    expect(seen[2]?.toolChoice).not.toEqual({ type: "required" });
+    expect(seen[1]?.instructions).toContain("khata desk");
+    expect(store.entries.at(-1)).toMatchObject({ kind: "credit_given", amountPaise: 45000 });
+  });
+
+  it("falls back to the general desk, with every tool, when the router's answer is unusable", async () => {
+    const store = await seededStore();
+    const { model, seen } = deskModel("I am not sure", [text("Namaste!")]);
+    const routes: { desk: string; by: string }[] = [];
+    const agent = createKhataAgent({ model, store, shopName: "Test", language: "hi", onRoute: (r) => routes.push(r) });
+    await agent.generate({ messages: [{ role: "user", content: "Namaste" }] });
+
+    expect(routes).toMatchObject([{ desk: "general", by: "fallback" }]);
+    expect(seen[0]?.tools).toContain("sendPaymentLink");
+    expect(seen[0]?.tools).toContain("getStock");
+    expect(seen[0]?.tools).not.toContain("handOff");
   });
 });

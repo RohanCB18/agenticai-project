@@ -1,5 +1,5 @@
 import "server-only";
-import { type Channel, createKhataAgent, detectLanguage, resolveModel } from "@munshi/agents";
+import { type Channel, createKhataAgent, detectLanguage, resolveModel, type Route } from "@munshi/agents";
 import type { Language } from "@munshi/db";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { createSupabaseKhataStore } from "@/lib/khata-store";
@@ -21,6 +21,7 @@ export function buildKhataAgent(opts: {
   source: "chat" | "voice" | "telegram" | "whatsapp";
   channel?: Channel;
   extraNote?: string;
+  onRoute?: (route: Route) => void;
 }) {
   // Without this secret a client could forge an "approved" payment in the chat history.
   const approvalSecret = process.env.TOOL_APPROVAL_SECRET;
@@ -44,6 +45,12 @@ export function buildKhataAgent(opts: {
     approvalSecret,
     channel: opts.channel,
     extraNote: opts.extraNote,
+    // MUNSHI_SPECIALISTS=off goes back to one agent with every tool, without a deploy of code.
+    specialists: process.env.MUNSHI_SPECIALISTS !== "off",
+    onRoute: (route) => {
+      console.info(`[munshi] ${opts.source} message -> ${route.desk} desk (${route.by}, ${route.ms}ms)`);
+      opts.onRoute?.(route);
+    },
     detectLanguage: sarvamApiKey ? (text) => detectLanguage({ apiKey: sarvamApiKey, text }) : undefined,
   });
 }

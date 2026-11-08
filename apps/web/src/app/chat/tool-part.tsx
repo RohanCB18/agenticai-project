@@ -27,6 +27,12 @@ export function ToolPart({ part, onDecision }: { part: Part; onDecision: Decide 
   const name = part.type.slice("tool-".length);
   const label = LABELS[name] ?? name;
 
+  // A desk passing the message on is housekeeping, not a result: one quiet line at most.
+  if (name === "handOff") {
+    const desk = (part.input as { desk?: string } | undefined)?.desk;
+    return part.state === "output-available" && desk ? <p className="text-xs text-muted">Passed to the {desk} desk</p> : null;
+  }
+
   if (part.state === "input-streaming" || part.state === "input-available") {
     return <p className="text-sm text-muted">{label}…</p>;
   }
