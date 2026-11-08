@@ -1,7 +1,12 @@
 import "server-only";
 import {
   approvalResponse,
+  claimsUnbackedAction,
   closePendingApprovals,
+  completedActions,
+  NOTHING_SAVED,
+  receiptLines,
+  UNBACKED_CLAIM_NOTE,
   type PendingApproval,
   pendingApprovals,
   SARVAM_LANGUAGE,
@@ -98,10 +103,22 @@ export async function handleInbound(inbound: Inbound, sender: ChannelSender) {
   }
 
   await sender.showWorking?.(chatId, "typing");
-  const agent = buildKhataAgent({ db: admin, merchant: { id: merchant.id, shopName: merchant.shop_name, language }, source: channel, channel });
+  const agentFor = (extraNote?: string) =>
+    buildKhataAgent({ db: admin, merchant: { id: merchant.id, shopName: merchant.shop_name, language }, source: channel, channel, extraNote });
+  const agent = agentFor();
   const result = await agent.generate({ messages });
   let responseMessages = result.responseMessages;
   let text = result.text.trim();
+
+  // A reply that says "likh diya" with no tool behind it: try once more from the owner's
+  // message, told what went wrong. If it still claims without acting, say so plainly.
+  if (claimsUnbackedAction(text, completedActions(responseMessages))) {
+    console.warn("[munshi] reply claimed an action no tool took; retrying:", text);
+    const retry = await agentFor(UNBACKED_CLAIM_NOTE).generate({ messages });
+    responseMessages = retry.responseMessages;
+    text = retry.text.trim();
+    if (claimsUnbackedAction(text, completedActions(responseMessages))) text = `${text}\n\n${NOTHING_SAVED}`;
+  }
   // In testing the model sometimes ran a tool and then wrote nothing. Give it one more turn with
   // the tool results in hand; it answers from them rather than redoing the tools.
   if (!text && pendingApprovals([...messages, ...responseMessages]).length === 0) {
@@ -113,7 +130,9 @@ export async function handleInbound(inbound: Inbound, sender: ChannelSender) {
   await admin.from("agent_threads").upsert({ merchant_id: merchant.id, channel, messages, updated_at: new Date().toISOString() });
 
   // New payment links: make sure the owner gets the link, with a button to pass it on.
-  let reply = text;
+  // Receipts come from the tools' own output, so the owner can tell what was really saved.
+  const receipts = receiptLines(completedActions(responseMessages));
+  let reply = receipts.length && text ? `${text}\n\n${receipts.join("\n")}` : text;
   const buttons: LinkButton[] = [];
   for (const output of toolOutputs(responseMessages, "sendPaymentLink")) {
     const out = output as { status?: string; url?: string; customer?: string; amount?: string };
@@ -134,7 +153,8 @@ export async function handleInbound(inbound: Inbound, sender: ChannelSender) {
 
   if (reply) {
     await sender.sendText(chatId, reply, buttons);
-    if (replyLanguage) await speakReply(sender, chatId, reply, replyLanguage);
+    // Speak the answer only: receipts and links are for reading.
+    if (replyLanguage && text) await speakReply(sender, chatId, text, replyLanguage);
   }
   for (const approval of pendingApprovals(messages)) {
     await sender.sendApproval(chatId, approvalPrompt(approval), approval.approvalId);

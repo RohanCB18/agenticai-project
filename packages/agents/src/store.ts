@@ -19,6 +19,8 @@ export type PaymentLink = {
 };
 export type PaymentQr = { id: string; amountPaise: Paise; expiresAt: string };
 export type PaymentCheck = { paidPaise: Paise; stillOpen: number };
+/** Something the owner asked Munshi to remember. customerId is null for a shop-wide fact. */
+export type Memory = { id: string; fact: string; customerId: string | null; createdAt: string };
 
 export interface KhataStore {
   listCustomers(): Promise<Customer[]>;
@@ -34,5 +36,9 @@ export interface KhataStore {
   createPaymentQr(input: { customer: Customer; amountPaise: Paise; purpose: string }): Promise<PaymentQr>;
   /** Asks Cashfree about open links and QRs and records anything paid. */
   checkPayments(customerId?: string): Promise<PaymentCheck>;
+  remember(input: { fact: string; customerId?: string }): Promise<Memory>;
+  /** Facts about one customer, or shop-wide facts when customerId is null. */
+  memories(customerId: string | null): Promise<Memory[]>;
+  forget(memoryId: string): Promise<boolean>;
   audit(action: string, details: Record<string, unknown>): Promise<void>;
 }

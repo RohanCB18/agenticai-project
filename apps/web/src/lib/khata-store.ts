@@ -230,6 +230,26 @@ export function createSupabaseKhataStore(db: SupabaseClient, merchantId: string,
       return reconcilePayments(createAdminClient(), merchantId, customerId);
     },
 
+    async remember({ fact, customerId }) {
+      const row = must(
+        await db.from("memories").insert({ merchant_id: merchantId, customer_id: customerId ?? null, fact, source: opts.source }).select("id, fact, customer_id, created_at").single(),
+        "Remember",
+      ) as { id: string; fact: string; customer_id: string | null; created_at: string };
+      return { id: row.id, fact: row.fact, customerId: row.customer_id, createdAt: row.created_at };
+    },
+
+    async memories(customerId) {
+      let q = db.from("memories").select("id, fact, customer_id, created_at").eq("merchant_id", merchantId).order("created_at");
+      q = customerId === null ? q.is("customer_id", null) : q.eq("customer_id", customerId);
+      const rows = must(await q, "Recall") as { id: string; fact: string; customer_id: string | null; created_at: string }[];
+      return rows.map((r) => ({ id: r.id, fact: r.fact, customerId: r.customer_id, createdAt: r.created_at }));
+    },
+
+    async forget(memoryId) {
+      const { data } = await db.from("memories").delete().eq("id", memoryId).eq("merchant_id", merchantId).select("id");
+      return Boolean(data?.length);
+    },
+
     async audit(action, details) {
       await db.from("audit_log").insert({ merchant_id: merchantId, actor: "khata-agent", action, details, trace_id: opts.traceId });
     },

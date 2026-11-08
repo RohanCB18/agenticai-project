@@ -1,4 +1,4 @@
-import type { Balance, Customer, KhataStore, LedgerEntry, PaymentCheck, PaymentLink, PaymentQr, Product } from "../store";
+import type { Balance, Customer, KhataStore, LedgerEntry, Memory, PaymentCheck, PaymentLink, PaymentQr, Product } from "../store";
 
 /** In-memory KhataStore for tests and evals. Mirrors the Supabase semantics. */
 export class MemoryStore implements KhataStore {
@@ -83,6 +83,24 @@ export class MemoryStore implements KhataStore {
 
   async checkPayments() {
     return this.nextCheck;
+  }
+
+  facts: Memory[] = [];
+
+  async remember({ fact, customerId }: { fact: string; customerId?: string }) {
+    const memory: Memory = { id: this.id("mem"), fact, customerId: customerId ?? null, createdAt: new Date().toISOString() };
+    this.facts.push(memory);
+    return memory;
+  }
+
+  async memories(customerId: string | null) {
+    return this.facts.filter((m) => m.customerId === customerId);
+  }
+
+  async forget(memoryId: string) {
+    const before = this.facts.length;
+    this.facts = this.facts.filter((m) => m.id !== memoryId);
+    return this.facts.length < before;
   }
 
   async audit(action: string, details: Record<string, unknown>) {

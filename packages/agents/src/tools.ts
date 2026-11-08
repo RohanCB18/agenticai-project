@@ -1,6 +1,7 @@
 import { formatINR, Language, rupeesToPaise } from "@munshi/db";
 import { tool } from "ai";
 import { z } from "zod";
+import { paymentHabits } from "./habits";
 import { rankByName } from "./match";
 import type { Customer, KhataStore } from "./store";
 
@@ -203,6 +204,70 @@ export function createKhataTools(store: KhataStore, shopName = "your shop") {
         } catch {
           return { status: "qr_unavailable", customer: r.customer.name, hint: "The QR couldn't be created. Offer a payment link instead." };
         }
+      },
+    }),
+
+    remember: tool({
+      description:
+        "Save a lasting fact the owner tells you: about a customer (pass customerName), like who they are or how they pay, or about the shop and how the owner likes things (omit customerName). Not for udhaar, payments or stock: those have their own tools.",
+      inputSchema: z.object({
+        fact: z
+          .string()
+          .min(3)
+          .max(300)
+          .describe(
+            "The fact as one full English sentence about the owner in the third person, keeping every name and relation they said: 'Ramesh mere padosi Lakshmi ke pati hain' becomes \"Ramesh is the husband of Lakshmi, the owner's neighbour\". Never drop a word like neighbour: it changes who someone is.",
+          ),
+        customerName: z.string().optional(),
+      }),
+      execute: async ({ fact, customerName }) => {
+        let customer: Customer | undefined;
+        if (customerName) {
+          const r = await resolveCustomer(store, customerName);
+          if (!r.ok) return r.result;
+          customer = r.customer;
+        }
+        // Saying the same thing twice shouldn't store it twice.
+        const known = await store.memories(customer?.id ?? null);
+        if (known.some((m) => m.fact.trim().toLowerCase() === fact.trim().toLowerCase())) return { status: "already_known", about: customer?.name ?? "the shop", fact };
+        await store.remember({ fact: fact.trim(), customerId: customer?.id });
+        return { status: "remembered", about: customer?.name ?? "the shop", fact: fact.trim() };
+      },
+    }),
+
+    recall: tool({
+      description:
+        "What the owner asked you to remember about a customer (pass customerName) or about the shop (omit it). Each fact has an id, used only to forget it.",
+      inputSchema: z.object({ customerName: z.string().optional() }),
+      execute: async ({ customerName }) => {
+        let customer: Customer | undefined;
+        if (customerName) {
+          const r = await resolveCustomer(store, customerName);
+          if (!r.ok) return r.result;
+          customer = r.customer;
+        }
+        const facts = await store.memories(customer?.id ?? null);
+        return { status: "facts", about: customer?.name ?? "the shop", facts: facts.map((m) => ({ id: m.id, fact: m.fact })) };
+      },
+    }),
+
+    forget: tool({
+      description: "Forget one remembered fact, by the id that recall returned. Use when the owner says something is no longer true.",
+      inputSchema: z.object({ memoryId: z.string() }),
+      execute: async ({ memoryId }) => ((await store.forget(memoryId)) ? { status: "forgotten" } : { status: "not_found" }),
+    }),
+
+    paymentHabits: tool({
+      description:
+        "How a customer usually pays, worked out from their real payments: usual weekday, days between payments, average amount. Use for questions like 'Fatima kab deti hai?'. Never guess habits without it.",
+      inputSchema: z.object({ customerName: z.string() }),
+      execute: async ({ customerName }) => {
+        const r = await resolveCustomer(store, customerName);
+        if (!r.ok) return r.result;
+        const habits = paymentHabits(await store.recentEntries(200, r.customer.id));
+        return habits.enough
+          ? { status: "habits", customer: r.customer.name, ...habits }
+          : { status: "not_enough_history", customer: r.customer.name, payments: habits.payments, hint: "Say there aren't enough payments yet to see a pattern." };
       },
     }),
 

@@ -105,3 +105,32 @@ describe("checkPayment", () => {
     expect(out).toMatchObject({ status: "no_new_payment", stillWaitingOn: 2 });
   });
 });
+
+describe("memory", () => {
+  it("remembers a fact about a customer once, even if said twice", async () => {
+    const first = await tools.remember.execute!({ fact: "Ramesh is Lakshmi's husband", customerName: "ರಮೇಶ್" }, ctx);
+    expect(first).toMatchObject({ status: "remembered", about: "Ramesh" });
+    const again = await tools.remember.execute!({ fact: "ramesh is lakshmi's husband ", customerName: "Ramesh" }, ctx);
+    expect(again).toMatchObject({ status: "already_known" });
+    expect(store.facts).toHaveLength(1);
+  });
+
+  it("keeps shop facts apart from customer facts", async () => {
+    await tools.remember.execute!({ fact: "Call the owner Akka" }, ctx);
+    await tools.remember.execute!({ fact: "Pays by GPay", customerName: "Fatima" }, ctx);
+    expect(await tools.recall.execute!({}, ctx)).toMatchObject({ about: "the shop", facts: [{ fact: "Call the owner Akka" }] });
+    expect(await tools.recall.execute!({ customerName: "Fatima" }, ctx)).toMatchObject({ about: "Fatima", facts: [{ fact: "Pays by GPay" }] });
+  });
+
+  it("forgets by id", async () => {
+    await tools.remember.execute!({ fact: "Closed on Sundays" }, ctx);
+    const id = store.facts[0]!.id;
+    expect(await tools.forget.execute!({ memoryId: id }, ctx)).toEqual({ status: "forgotten" });
+    expect(await tools.forget.execute!({ memoryId: id }, ctx)).toEqual({ status: "not_found" });
+  });
+
+  it("won't describe payment habits without enough history", async () => {
+    await tools.recordPayment.execute!({ customerName: "Fatima", amount: 100, method: "upi" }, ctx);
+    expect(await tools.paymentHabits.execute!({ customerName: "Fatima" }, ctx)).toMatchObject({ status: "not_enough_history", payments: 1 });
+  });
+});

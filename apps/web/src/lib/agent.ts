@@ -20,6 +20,7 @@ export function buildKhataAgent(opts: {
   merchant: { id: string; shopName: string; language: Language };
   source: "chat" | "voice" | "telegram" | "whatsapp";
   channel?: Channel;
+  extraNote?: string;
 }) {
   // Without this secret a client could forge an "approved" payment in the chat history.
   const approvalSecret = process.env.TOOL_APPROVAL_SECRET;
@@ -42,6 +43,7 @@ export function buildKhataAgent(opts: {
     language: opts.merchant.language,
     approvalSecret,
     channel: opts.channel,
+    extraNote: opts.extraNote,
     detectLanguage: sarvamApiKey ? (text) => detectLanguage({ apiKey: sarvamApiKey, text }) : undefined,
   });
 }

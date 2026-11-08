@@ -39,6 +39,7 @@ How to work:
 - To collect dues over UPI, use sendPaymentLink. The owner will be asked to approve it. If they deny it, acknowledge and do not retry. If the tool returns a link, it is already approved, so never ask for approval again. If customerNotified is false, the customer has NOT been told: say the link is ready for the owner to forward, never that it was sent.
 - Any request for a QR ("QR dikhao", "X ka QR", "scan karega"), or a customer who is in the shop ("yahan khada hai"), means call showPaymentQr, without asking first or looking up the balance. Never offer a link when the owner asked for a QR. Only after it returns qr_ready, tell the owner the QR is on screen. If it reports qr_unavailable, offer a payment link.
 - "X ka payment aaya?" or "did X pay?" means checkPayment.
+- When the owner tells you a lasting fact or a preference ("Ramesh is Lakshmi's husband", "call me Akka", "Fatima pays on Saturdays"), save it with remember. Before answering about a customer's background, check recall and repeat what it says without adding to it: "the owner" in a fact means the person you are talking to, so say "your", and any other name is someone else. For payment patterns, use paymentHabits rather than memory or guesses.
 - Never record the same entry twice. If the owner repeats themselves, ask whether it is a new entry.${CHANNEL_NOTES[channel]}`;
 }
 
@@ -116,10 +117,21 @@ export type KhataAgentOptions = {
   channel?: Channel;
   /** Names the language of the owner's latest message. Without it, the instructions alone decide. */
   detectLanguage?: (text: string) => Promise<DetectedLanguage | null>;
+  /** One more closing note for this run, e.g. after a reply claimed an action no tool took. */
+  extraNote?: string;
 };
 
-export function createKhataAgent({ model, store, shopName, language, approvalSecret, channel, detectLanguage }: KhataAgentOptions) {
-  // One detection per turn; every step of the loop reuses it. A failed detection isn't fatal.
+const SHOP_FACTS_SHOWN = 12;
+
+/** The owner's shop-wide preferences, so they apply without the model having to look them up. */
+async function shopFactsNote(store: KhataStore) {
+  const facts = (await store.memories(null)).slice(-SHOP_FACTS_SHOWN);
+  return facts.length ? `What the owner asked you to remember about the shop:\n${facts.map((m) => `- ${m.fact}`).join("\n")}` : null;
+}
+
+export function createKhataAgent({ model, store, shopName, language, approvalSecret, channel, detectLanguage, extraNote }: KhataAgentOptions) {
+  // One lookup per turn for each note; every step of the loop reuses it. Failures aren't fatal.
+  let shopFacts: Promise<string | null> | undefined;
   let languageRule: Promise<string | null> | undefined;
   const replyRule = (messages: ModelMessage[]) => {
     languageRule ??= (async () => {
@@ -148,8 +160,9 @@ export function createKhataAgent({ model, store, shopName, language, approvalSec
       // this turn has a tool result: shown on every step, the model kept re-calling tools until the
       // step limit and never answered.
       const rule = await replyRule(messages);
+      shopFacts ??= shopFactsNote(store).catch(() => null);
       const fresh = hasResultThisTurn(messages) ? null : FRESH_FIGURES_RULE;
-      const note = [fresh, rule].filter(Boolean).join("\n");
+      const note = [await shopFacts, fresh, rule, extraNote].filter(Boolean).join("\n");
       return {
         ...(note ? { model: withClosingNote(model, note) } : {}),
         // Without the old figures to copy, the model has to look them up again.

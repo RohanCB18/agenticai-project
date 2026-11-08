@@ -8,6 +8,10 @@ type Decide = (response: { id: string; approved: boolean; reason?: string }) => 
 const LABELS: Record<string, string> = {
   findCustomer: "Looking up customer",
   showPaymentQr: "UPI QR",
+  remember: "Remembered",
+  recall: "Memory",
+  forget: "Forgotten",
+  paymentHabits: "Payment habits",
   checkPayment: "Payment check",
   addCustomer: "Adding customer",
   recordCredit: "Udhaar recorded",
@@ -123,6 +127,38 @@ function Output({ name, out }: { name: string; out: Record<string, unknown> }) {
     const matches = out.matches as { name: string; phone: string | null }[];
     if (matches.length === 0) return <p>No match.</p>;
     return <p>{matches.map((m) => m.name).join(", ")}</p>;
+  }
+
+  if (name === "remember" && typeof out.fact === "string") {
+    return (
+      <p>
+        {String(out.about)}: {out.fact}
+        {out.status === "already_known" ? " (already known)" : ""}
+      </p>
+    );
+  }
+
+  if (name === "recall" && Array.isArray(out.facts)) {
+    const facts = out.facts as { id: string; fact: string }[];
+    if (facts.length === 0) return <p>Nothing remembered about {String(out.about)} yet.</p>;
+    return (
+      <ul className="flex list-disc flex-col gap-1 pl-4">
+        {facts.map((f) => (
+          <li key={f.id}>{f.fact}</li>
+        ))}
+      </ul>
+    );
+  }
+
+  if (name === "forget") return <p>{out.status === "forgotten" ? "Done." : "That fact wasn't found."}</p>;
+
+  if (name === "paymentHabits" && out.status === "habits") {
+    return (
+      <p>
+        {String(out.customer)}: {String(out.payments)} payments, about every {String(out.averageGapDays)} days, usually {String(out.averagePayment)}
+        {out.usualDay ? `, mostly on ${String(out.usualDay)}` : ""}. Last paid {String(out.lastPaidDaysAgo)} days ago.
+      </p>
+    );
   }
 
   if (name === "sendPaymentLink" && out.status === "sent") {
