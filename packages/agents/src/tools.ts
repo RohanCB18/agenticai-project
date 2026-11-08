@@ -3,6 +3,7 @@ import { tool } from "ai";
 import { z } from "zod";
 import { paymentHabits } from "./habits";
 import { rankByName } from "./match";
+import { rankProducts, tooClose } from "./staples";
 import type { Customer, KhataStore } from "./store";
 
 const Rupees = z
@@ -132,7 +133,7 @@ export function createKhataTools(store: KhataStore, shopName = "your shop") {
       inputSchema: z.object({ productName: z.string().optional(), lowOnly: z.boolean().default(false) }),
       execute: async ({ productName, lowOnly }) => {
         let products = await store.listProducts();
-        if (productName) products = rankByName(productName, products).map((m) => m.item).slice(0, 3);
+        if (productName) products = rankProducts(productName, products).map((m) => m.item).slice(0, 3);
         if (lowOnly) products = products.filter((p) => p.reorderLevel !== null && p.stockQty <= p.reorderLevel);
         return {
           products: products.map((p) => ({
@@ -153,8 +154,11 @@ export function createKhataTools(store: KhataStore, shopName = "your shop") {
         reason: z.enum(["purchase", "sale", "wastage", "correction"]),
       }),
       execute: async ({ productName, change, reason }) => {
-        const [match] = rankByName(productName, await store.listProducts());
+        const matches = rankProducts(productName, await store.listProducts());
+        const [match] = matches;
         if (!match) return { status: "product_not_found", productName };
+        // Two products that both fit ("Rice" and "Sona Masoori Rice" for "akki"): ask, don't pick.
+        if (tooClose(matches)) return { status: "ambiguous_product", candidates: matches.slice(0, 3).map((m) => m.item.name), hint: "Ask the owner which product." };
         const product = await store.moveStock({ productId: match.item.id, delta: change, reason });
         return { status: "updated", product: product.name, stock: `${product.stockQty} ${product.unit}` };
       },

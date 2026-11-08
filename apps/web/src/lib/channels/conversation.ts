@@ -2,6 +2,8 @@ import "server-only";
 import {
   approvalResponse,
   claimsUnbackedAction,
+  missedEntry,
+  NOT_RECORDED,
   closePendingApprovals,
   completedActions,
   NOTHING_SAVED,
@@ -71,6 +73,7 @@ export async function handleInbound(inbound: Inbound, sender: ChannelSender) {
 
   const { data: thread } = await admin.from("agent_threads").select("messages").eq("merchant_id", merchant.id).eq("channel", channel).maybeSingle();
   let messages = (thread?.messages ?? []) as ModelMessage[];
+  let ownerText = ""; // what the owner said this turn, if they said anything
   let replyLanguage: string | null = null; // set for voice notes: Munshi answers by voice too
 
   if (inbound.kind === "decision") {
@@ -99,6 +102,7 @@ export async function handleInbound(inbound: Inbound, sender: ChannelSender) {
       return sender.sendText(chatId, `I understand texts, voice notes and photos of bills. ${HELP}`);
     }
     if (!text) return;
+    ownerText = text;
     messages = [...closePendingApprovals(messages), { role: "user", content: text }];
   }
 
@@ -133,6 +137,11 @@ export async function handleInbound(inbound: Inbound, sender: ChannelSender) {
   // Receipts come from the tools' own output, so the owner can tell what was really saved.
   const receipts = receiptLines(completedActions(responseMessages));
   let reply = receipts.length && text ? `${text}\n\n${receipts.join("\n")}` : text;
+  // The owner said money or goods changed hands, nothing was saved, and the reply doesn't ask why.
+  if (pendingApprovals(messages).length === 0 && missedEntry(ownerText, text, completedActions(responseMessages))) {
+    console.warn("[munshi] owner reported an entry but nothing was recorded:", ownerText);
+    reply = `${reply}\n\n${NOT_RECORDED}`;
+  }
   const buttons: LinkButton[] = [];
   for (const output of toolOutputs(responseMessages, "sendPaymentLink")) {
     const out = output as { status?: string; url?: string; customer?: string; amount?: string };

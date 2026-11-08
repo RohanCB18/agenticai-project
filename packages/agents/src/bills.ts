@@ -1,5 +1,5 @@
 import { formatINR, rupeesToPaise } from "@munshi/db";
-import { rankByName } from "./match";
+import { rankProducts, tooClose } from "./staples";
 
 // Reading supplier bills from photos with Sarvam Document AI (sarvam-vision).
 // Docs: https://docs.sarvam.ai/api-reference/doc-ai/job/extract
@@ -112,9 +112,9 @@ export type PlannedItem = BillItem & { productId: string | null; productName: st
 /** Matches each bill line to a product. Lines with no confident match become new products. */
 export function planBill(bill: Bill, products: { id: string; name: string; aliases: string[]; stockQty: number }[]): PlannedItem[] {
   return bill.items.map((item) => {
-    const [best, second] = rankByName(item.name, products, 0.75);
+    const matches = rankProducts(item.name, products, 0.75);
     // Two close candidates: don't guess whose stock to change.
-    const match = best && !(second && best.score - second.score < 0.1 && best.score < 1) ? best.item : null;
+    const match = matches[0] && !tooClose(matches) ? matches[0].item : null;
     return { ...item, productId: match?.id ?? null, productName: match?.name ?? null, stockBefore: match?.stockQty ?? null };
   });
 }

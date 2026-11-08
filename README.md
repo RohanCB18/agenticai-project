@@ -90,17 +90,19 @@ Measured with `npm run eval -w @munshi/agents` (real Sarvam, in-memory shop): 39
 
 | | One agent, every tool | Desks |
 |---|---|---|
-| Right tool | 74 of 77 | 78 of 78 |
+| Right tool | 74 of 77 | 77 of 78 |
 | Held-out cases | 23 of 23 | 24 of 24 |
 | Wrong writes | 0 | 0 |
-| Median / p90 reply time | 2.7 s / 4.5 s | 2.6 s / 4.7 s |
-| Input tokens per message | 6,067 | 5,147 |
+| Median / p90 reply time | 2.7 s / 4.5 s | 2.7 s / 6.6 s |
+| Input tokens per message | 6,067 | 5,388 |
 
-One run each, so read it as a direction, not a guarantee (results in `packages/agents/evals/results`). The one agent read "Akki eshtu ide?" (Kannada: how much rice is left?) as a customer called Akki; the stock desk can't make that mistake. Cash and UPI collection are both "money in" to the router, so both money desks can record a cash payment. `MUNSHI_SPECIALISTS=off` goes back to one agent.
+One run each, so read it as a direction, not a guarantee (results in `packages/agents/evals/results`; an earlier desks run scored 78 of 78). The one agent read "Akki eshtu ide?" (Kannada: how much rice is left?) as a customer called Akki; the stock desk can't make that mistake, and product matching now knows everyday staple names (akki, chawal, arisi → Rice). Both setups once said "Sugar 5 kg stock kam kar diya" without a tool call; the claim guard now catches stock-change wording too. Cash and UPI collection are both "money in" to the router, so both money desks can record a cash payment. `MUNSHI_SPECIALISTS=off` goes back to one agent.
 
 ## Receipts, not promises
 
 A model can write "Ramesh ka 450 likh diya" without calling a tool. So on Telegram every change gets a receipt line built by code from the tool's result (`🧾 Udhaar: Ramesh ₹450 · owes ₹900`), never by the model. If a reply claims something was saved (in English, Hinglish, Hindi, Kannada or Tamil) and no tool ran, Munshi retries once, told what went wrong. If it still claims without acting, the reply ends with "⚠️ Nothing was saved this time."
+
+The opposite slip happens too: live, "Ramesh ne 200 diye, ab kitna baaki hai?" got only the balance back, and the 200 was never written down. When the owner's message reports money or goods changing hands, nothing was saved, and the reply doesn't ask about it, the reply ends with "📝 Nothing was recorded from this message." There is no automatic retry here: if the owner was asking about an old payment, a retry could record it twice.
 
 ## Memory
 
