@@ -2,6 +2,7 @@ import type { LanguageModelV4 } from "@ai-sdk/provider";
 import type { Language } from "@munshi/db";
 import { isStepCount, type ModelMessage, ToolLoopAgent, type InferAgentUIMessage, wrapLanguageModel } from "ai";
 import type { KhataStore } from "./store";
+import { forgetOldToolResults } from "./threads";
 import { createKhataTools } from "./tools";
 import type { DetectedLanguage } from "./voice";
 
@@ -64,6 +65,10 @@ export function replyLanguageRule(detected: DetectedLanguage): string | null {
     : `The owner's latest message is in ${name}. Reply in ${name}, in its own script.`;
 }
 
+/** Read on every step: earlier replies in the chat quote figures that may have changed since. */
+export const FRESH_FIGURES_RULE =
+  "Balances, payments and stock may have changed since earlier messages (bills, payments, other devices). Never repeat a figure from earlier in the chat: call the tool again in this turn before stating any balance or stock.";
+
 /** Adds a note as the last thing the model reads, for this call only: it never joins the thread. */
 function withClosingNote(model: LanguageModelV4, note: string) {
   return wrapLanguageModel({
@@ -73,6 +78,15 @@ function withClosingNote(model: LanguageModelV4, note: string) {
       transformParams: async ({ params }) => ({ ...params, prompt: [...params.prompt, { role: "system", content: note }] }),
     },
   });
+}
+
+/** True once a tool has answered since the owner's latest message. */
+function hasResultThisTurn(messages: ModelMessage[]) {
+  for (let i = messages.length - 1; i >= 0 && messages[i]!.role !== "user"; i--) {
+    const message = messages[i]!;
+    if (message.role === "tool" && message.content.some((part) => part.type === "tool-result")) return true;
+  }
+  return false;
 }
 
 /** The newest thing the owner wrote, ignoring tool messages that follow it. */
@@ -129,11 +143,17 @@ export function createKhataAgent({ model, store, shopName, language, approvalSec
     // it. An owner showing a customer a QR that doesn't exist is not something to leave to a prompt.
     // (Sarvam rejects naming a tool in tool_choice, so offer only this tool and require a call.)
     prepareStep: async ({ stepNumber, messages }) => {
-      // The model follows the language of the recent chat over any rule at the top of the
-      // prompt, so the language of this message is the last thing it reads on every step.
+      // The model follows the recent chat over rules at the top of the prompt, so the reply
+      // language and the freshness rule are the last thing it reads. The freshness rule stops once
+      // this turn has a tool result: shown on every step, the model kept re-calling tools until the
+      // step limit and never answered.
       const rule = await replyRule(messages);
+      const fresh = hasResultThisTurn(messages) ? null : FRESH_FIGURES_RULE;
+      const note = [fresh, rule].filter(Boolean).join("\n");
       return {
-        ...(rule ? { model: withClosingNote(model, rule) } : {}),
+        ...(note ? { model: withClosingNote(model, note) } : {}),
+        // Without the old figures to copy, the model has to look them up again.
+        ...(stepNumber === 0 ? { messages: forgetOldToolResults(messages) } : {}),
         ...(stepNumber === 0 && asksForQr(messages) ? { activeTools: ["showPaymentQr" as const], toolChoice: "required" as const } : {}),
       };
     },

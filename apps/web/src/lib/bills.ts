@@ -38,7 +38,10 @@ export async function handleBillPhoto(db: SupabaseClient, sender: ChannelSender,
   );
 
   const warnings = checkBill(bill);
-  if (await alreadyApplied(db, merchantId, bill)) warnings.unshift("This bill looks already added. Adding it again would double the stock.");
+  // In live testing a duplicate was approved with one tap despite a warning at the bottom, so a
+  // repeat bill leads with the warning and its button says what it really does.
+  const duplicate = await alreadyApplied(db, merchantId, bill);
+  if (duplicate) warnings.unshift(DUPLICATE_WARNING);
 
   const { data: saved, error } = await db
     .from("bills")
@@ -56,8 +59,16 @@ export async function handleBillPhoto(db: SupabaseClient, sender: ChannelSender,
     .single();
   if (error || !saved) throw new Error(`Save bill failed: ${error?.message}`);
 
-  await sender.sendApproval(chatId, billSummary(bill, items, warnings), `${BILL_APPROVAL_PREFIX}${saved.id}`, { yes: "✅ Add to stock", no: "❌ Nahi" });
+  const summary = billSummary(bill, items, warnings);
+  await sender.sendApproval(
+    chatId,
+    duplicate ? `⚠️ ALREADY ADDED: you added this bill before. Adding it again doubles the stock.\n\n${summary}` : summary,
+    `${BILL_APPROVAL_PREFIX}${saved.id}`,
+    duplicate ? { yes: "⚠️ Add again anyway", no: "✅ Don't add" } : { yes: "✅ Add to stock", no: "❌ Nahi" },
+  );
 }
+
+const DUPLICATE_WARNING = "This bill looks already added. Adding it again would double the stock.";
 
 function toStoredItem(item: PlannedItem) {
   return { name: item.name, quantity: item.quantity, unit: item.unit, rate: item.rate, amount: item.amount, product_id: item.productId };

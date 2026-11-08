@@ -1,6 +1,6 @@
 import type { ModelMessage } from "ai";
 import { describe, expect, it } from "vitest";
-import { approvalResponse, closePendingApprovals, pendingApprovals, toolOutputs, trimThread } from "./threads";
+import { approvalResponse, closePendingApprovals, forgetOldToolResults, pendingApprovals, toolOutputs, trimThread } from "./threads";
 
 const asked: ModelMessage[] = [
   { role: "user", content: "Ramesh ko link bhejo" },
@@ -42,6 +42,33 @@ describe("threads", () => {
     ];
     expect(toolOutputs(response, "sendPaymentLink")).toEqual([{ status: "sent", url: "https://pay" }]);
     expect(toolOutputs(asked, "sendPaymentLink")).toEqual([]);
+  });
+
+  it("blanks tool results from earlier turns but keeps this turn's", () => {
+    const stock = (value: number): ModelMessage => ({
+      role: "tool",
+      content: [{ type: "tool-result", toolCallId: `call_${value}`, toolName: "getStock", output: { type: "json", value: { rice: value } } }],
+    });
+    const call = (value: number): ModelMessage => ({
+      role: "assistant",
+      content: [{ type: "tool-call", toolCallId: `call_${value}`, toolName: "getStock", input: {} }],
+    });
+    const thread: ModelMessage[] = [
+      { role: "user", content: "stock kitna hai?" },
+      call(25),
+      stock(25),
+      { role: "assistant", content: "Rice 25 kg" },
+      { role: "user", content: "stock kitna hai?" },
+      call(50),
+      stock(50),
+    ];
+
+    const seen = forgetOldToolResults(thread);
+    const blanked = (seen[2] as { content: { output: unknown }[] }).content[0]!.output;
+    expect(blanked).toEqual({ type: "text", value: expect.stringContaining("no longer current") });
+    expect(seen[1]).toBe(thread[1]); // the call and its input stay
+    expect(seen[6]).toBe(thread[6]); // this turn's result is untouched
+    expect(JSON.stringify(thread[2])).toContain("25"); // the saved thread keeps the real value
   });
 
   it("trims long threads at an owner message", () => {

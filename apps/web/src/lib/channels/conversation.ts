@@ -100,13 +100,22 @@ export async function handleInbound(inbound: Inbound, sender: ChannelSender) {
   await sender.showWorking?.(chatId, "typing");
   const agent = buildKhataAgent({ db: admin, merchant: { id: merchant.id, shopName: merchant.shop_name, language }, source: channel, channel });
   const result = await agent.generate({ messages });
-  messages = trimThread([...messages, ...result.responseMessages]);
+  let responseMessages = result.responseMessages;
+  let text = result.text.trim();
+  // In testing the model sometimes ran a tool and then wrote nothing. Give it one more turn with
+  // the tool results in hand; it answers from them rather than redoing the tools.
+  if (!text && pendingApprovals([...messages, ...responseMessages]).length === 0) {
+    const retry = await agent.generate({ messages: [...messages, ...responseMessages] });
+    responseMessages = [...responseMessages, ...retry.responseMessages];
+    text = retry.text.trim() || "Sorry, I couldn't put that into words. Please ask again.";
+  }
+  messages = trimThread([...messages, ...responseMessages]);
   await admin.from("agent_threads").upsert({ merchant_id: merchant.id, channel, messages, updated_at: new Date().toISOString() });
 
   // New payment links: make sure the owner gets the link, with a button to pass it on.
-  let reply = result.text.trim();
+  let reply = text;
   const buttons: LinkButton[] = [];
-  for (const output of toolOutputs(result.responseMessages, "sendPaymentLink")) {
+  for (const output of toolOutputs(responseMessages, "sendPaymentLink")) {
     const out = output as { status?: string; url?: string; customer?: string; amount?: string };
     if (out.status !== "sent" || !out.url) continue;
     if (!reply.includes(out.url)) reply += `\n\nUPI link: ${out.url}`;
@@ -116,7 +125,7 @@ export async function handleInbound(inbound: Inbound, sender: ChannelSender) {
   }
 
   // In-shop QRs go out as an image, before the reply, so the customer can scan straight away.
-  for (const output of toolOutputs(result.responseMessages, "showPaymentQr")) {
+  for (const output of toolOutputs(responseMessages, "showPaymentQr")) {
     const out = output as { status?: string; qrId?: string; customer?: string; amount?: string };
     if (out.status !== "qr_ready" || !out.qrId) continue;
     const { data: qr } = await admin.from("payment_qrs").select("qr_png").eq("id", out.qrId).eq("merchant_id", merchant.id).single();

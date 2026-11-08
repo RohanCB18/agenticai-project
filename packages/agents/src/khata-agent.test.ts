@@ -1,7 +1,7 @@
 import type { LanguageModelV4GenerateResult } from "@ai-sdk/provider";
 import { MockLanguageModelV4 } from "ai/test";
 import { describe, expect, it } from "vitest";
-import { asksForQr, createKhataAgent, replyLanguageRule } from "./khata-agent";
+import { asksForQr, createKhataAgent, FRESH_FIGURES_RULE, replyLanguageRule } from "./khata-agent";
 import { unstreamForcedToolCalls, withFallback } from "./models";
 import { MemoryStore } from "./testing/memory-store";
 
@@ -69,6 +69,25 @@ describe("reply language", () => {
     for (const message of lastMessages) expect(message).toMatchObject({ role: "system", content: expect.stringContaining("Kannada") });
     // The rule is for the model call only: it never joins the saved conversation.
     expect(JSON.stringify(result.responseMessages)).not.toContain("written in English letters");
+  });
+
+  it("asks for fresh figures until this turn has a tool result, then stops asking", async () => {
+    const store = await seededStore();
+    const notes: string[] = [];
+    const steps = [toolCall("getBalances", {}), text("Ramesh ka 0 baaki hai")];
+    const model = new MockLanguageModelV4({
+      doGenerate: async (options) => {
+        const last = options.prompt.at(-1);
+        notes.push(last?.role === "system" ? last.content : "");
+        return steps[notes.length - 1]!;
+      },
+    });
+    const agent = createKhataAgent({ model, store, shopName: "Test", language: "hi" });
+    await agent.generate({ messages: [{ role: "user", content: "Ramesh ka kitna baaki hai?" }] });
+
+    expect(notes[0]).toContain(FRESH_FIGURES_RULE);
+    // Repeated after the lookup, the rule made the model call tools until the step limit.
+    expect(notes[1]).not.toContain(FRESH_FIGURES_RULE);
   });
 
   it("carries on without a rule if detection fails", async () => {

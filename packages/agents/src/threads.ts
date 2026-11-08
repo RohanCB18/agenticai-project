@@ -66,6 +66,25 @@ export function toolOutputs(messages: ModelMessage[], toolName: string): unknown
   return outputs;
 }
 
+const OLD_RESULT = "Earlier result, no longer current. Call the tool again for today's figures.";
+
+/**
+ * Blanks tool results from before the owner's latest message. Balances and stock change between
+ * messages (bills, payments, other channels), and in testing the model repeated old figures instead
+ * of calling the tool again. Calls and their inputs stay, so "uska total?" still knows who "uska" is.
+ */
+export function forgetOldToolResults(messages: ModelMessage[]): ModelMessage[] {
+  let lastOwner = messages.length - 1;
+  while (lastOwner >= 0 && messages[lastOwner]!.role !== "user") lastOwner--;
+  return messages.map((message, index) => {
+    if (index >= lastOwner || message.role !== "tool") return message;
+    return {
+      ...message,
+      content: message.content.map((part) => (part.type === "tool-result" ? { ...part, output: { type: "text" as const, value: OLD_RESULT } } : part)),
+    };
+  });
+}
+
 /** Keeps roughly the last `max` messages, always starting at an owner message so tool calls stay paired. */
 export function trimThread(messages: ModelMessage[], max = 40): ModelMessage[] {
   if (messages.length <= max) return messages;
