@@ -21,6 +21,8 @@ const LABELS: Record<string, string> = {
   getStock: "Stock",
   updateStock: "Stock updated",
   sendPaymentLink: "UPI payment link",
+  askSupplierQuote: "Wholesaler quote",
+  placeSupplierOrder: "Wholesaler order",
 };
 
 export function ToolPart({ part, onDecision }: { part: Part; onDecision: Decide }) {
@@ -35,6 +37,26 @@ export function ToolPart({ part, onDecision }: { part: Part; onDecision: Decide 
 
   if (part.state === "input-streaming" || part.state === "input-available") {
     return <p className="text-sm text-muted">{label}…</p>;
+  }
+
+  if (part.state === "approval-requested" && !part.approval.isAutomatic && name === "placeSupplierOrder") {
+    return (
+      <div className="flex max-w-sm flex-col gap-3 rounded-lg border-2 border-accent bg-surface p-4">
+        <p className="text-sm uppercase tracking-wider text-accent">Needs your OK</p>
+        <p>Order the quote above from the wholesaler? You pay on delivery.</p>
+        <div className="flex gap-2">
+          <button onClick={() => onDecision({ id: part.approval.id, approved: true })} className="rounded-md bg-accent px-4 py-2 font-medium text-on-accent">
+            Haan, order karo
+          </button>
+          <button
+            onClick={() => onDecision({ id: part.approval.id, approved: false, reason: "Owner declined" })}
+            className="rounded-md border border-line px-4 py-2"
+          >
+            Nahi
+          </button>
+        </div>
+      </div>
+    );
   }
 
   if (part.state === "approval-requested" && !part.approval.isAutomatic) {
@@ -62,7 +84,7 @@ export function ToolPart({ part, onDecision }: { part: Part; onDecision: Decide 
   }
 
   if (part.state === "approval-responded") return <p className="text-sm text-muted">{part.approval.approved ? "Approved. Sending…" : "Not sent."}</p>;
-  if (part.state === "output-denied") return <p className="text-sm text-muted">Payment link not sent.</p>;
+  if (part.state === "output-denied") return <p className="text-sm text-muted">{name === "placeSupplierOrder" ? "Order not placed." : "Payment link not sent."}</p>;
   if (part.state === "output-error") {
     return <p className="rounded-md bg-danger-soft px-3 py-2 text-sm text-danger">{label} failed: {part.errorText}</p>;
   }
@@ -163,6 +185,39 @@ function Output({ name, out }: { name: string; out: Record<string, unknown> }) {
       <p>
         {String(out.customer)}: {String(out.payments)} payments, about every {String(out.averageGapDays)} days, usually {String(out.averagePayment)}
         {out.usualDay ? `, mostly on ${String(out.usualDay)}` : ""}. Last paid {String(out.lastPaidDaysAgo)} days ago.
+      </p>
+    );
+  }
+
+  if (name === "askSupplierQuote" && out.status === "quoted") {
+    const lines = (out.lines ?? []) as { item: string; quantity: string; amount: string; note?: string }[];
+    const unavailable = (out.unavailable ?? []) as { requested: string; reason: string }[];
+    return (
+      <div className="flex flex-col gap-1">
+        <p className="font-medium">{String(out.supplier)}</p>
+        <ul className="flex flex-col gap-0.5">
+          {lines.map((line) => (
+            <li key={line.item}>
+              {line.item}: {line.quantity}, {line.amount}
+              {line.note ? <span className="text-muted"> ({line.note})</span> : null}
+            </li>
+          ))}
+        </ul>
+        {unavailable.length ? <p className="text-muted">Can&apos;t supply: {unavailable.map((u) => `${u.requested} (${u.reason})`).join(", ")}</p> : null}
+        <p className="font-medium">
+          Total {String(out.total)}
+          {out.discount ? ` after ${String(out.discount)} off` : ""}
+        </p>
+        <p className="text-muted">Delivery {String(out.deliverySlot)}, pay on delivery</p>
+        {out.belowMinimum ? <p className="text-danger">{String(out.belowMinimum)}</p> : null}
+      </div>
+    );
+  }
+
+  if (name === "placeSupplierOrder" && out.status === "ordered") {
+    return (
+      <p>
+        Order {String(out.orderId)} with {String(out.supplier)}: {String(out.total)}, delivery {String(out.deliverySlot)}
       </p>
     );
   }

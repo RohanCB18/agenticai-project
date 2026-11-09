@@ -1,5 +1,6 @@
 import { after } from "next/server";
 import { handleInbound } from "@/lib/channels/conversation";
+import { flushTraces } from "@/lib/telemetry";
 import {
   inboundMessages,
   verifyWhatsAppSignature,
@@ -51,6 +52,7 @@ export async function POST(request: Request) {
         await whatsappSender.sendText(message.chatId, "Sorry, something went wrong on my side. Please try again in a minute.").catch(() => {});
       }
     }
+    await flushTraces();
   });
 
   return new Response("OK", { status: 200 });

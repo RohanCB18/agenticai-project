@@ -4,7 +4,7 @@ version = "0.1.0"
 requires-python = ">=3.12"
 
 [tool.uv.workspace]
-members = ["services/mcp", "services/distributor"]
+members = ["services/distributor"]
 
 [dependency-groups]
 dev = ["pytest>=9.2", "pytest-asyncio>=1.0", "ruff>=0.17", "httpx>=0.28"]
@@ -17,7 +17,7 @@ target-version = "py312"
 select = ["E", "F", "I", "B", "UP", "ASYNC"]
 
 [tool.ruff.lint.isort]
-known-first-party = ["munshi_mcp", "munshi_distributor"]
+known-first-party = ["munshi_distributor"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

@@ -1,11 +1,12 @@
 import { formatINR, Language, rupeesToPaise } from "@munshi/db";
-import { tool } from "ai";
+import { type ModelMessage, tool } from "ai";
 import { z } from "zod";
 import { paymentHabits } from "./habits";
 import { ownerWasAskedAboutRepeat } from "./threads";
 import { rankByName } from "./match";
 import { rankProducts, tooClose } from "./staples";
 import type { Customer, KhataStore } from "./store";
+import { latestQuoteId, type QuoteRequestItem, readQuote, SupplierError, type SupplierAgent } from "./supplier";
 
 const Rupees = z
   .number()
@@ -79,7 +80,27 @@ async function resolveCustomer(store: KhataStore, name: string): Promise<Resolve
   return { ok: true, customer: best.item };
 }
 
-export function createKhataTools(store: KhataStore, shopName = "your shop") {
+export type KhataToolOptions = {
+  /**
+   * Whether `confirmedNew` on a possible repeat really comes from the owner. Munshi's own model once
+   * set it unasked, so by default it only counts when the chat shows the question was asked and
+   * answered. MCP hosts don't send the chat; they show each write call to the owner instead.
+   */
+  repeatConfirmed?: (messages: ModelMessage[], customer: string, amount: string) => boolean;
+  /** The wholesaler to restock from (an A2A agent). Without one, the supplier tools say so. */
+  supplier?: SupplierAgent;
+};
+
+const NO_SUPPLIER = { status: "no_supplier", hint: "Tell the owner no wholesaler is connected to Munshi yet." };
+
+function supplierDown(name: string, error: unknown) {
+  if (error instanceof SupplierError) return { status: error.code, supplier: name, message: error.message };
+  return { status: "supplier_unavailable", supplier: name, hint: "The wholesaler's agent didn't answer. Tell the owner to try again in a few minutes." };
+}
+
+export function createKhataTools(store: KhataStore, shopName = "your shop", options: KhataToolOptions = {}) {
+  const repeatConfirmed = options.repeatConfirmed ?? ownerWasAskedAboutRepeat;
+  const { supplier } = options;
   return {
     findCustomer: tool({
       description: "Look up customers by a spoken or typed name, including nicknames and names in Indian scripts.",
@@ -115,7 +136,7 @@ export function createKhataTools(store: KhataStore, shopName = "your shop") {
       execute: async ({ customerName, amount, note, confirmedNew }, { messages }) => {
         const r = await resolveCustomer(store, customerName);
         if (!r.ok) return r.result;
-        if (!(confirmedNew && ownerWasAskedAboutRepeat(messages, r.customer.name, formatINR(rupeesToPaise(amount))))) {
+        if (!(confirmedNew && repeatConfirmed(messages, r.customer.name, formatINR(rupeesToPaise(amount))))) {
           const twin = await recentTwin(store, r.customer, "credit_given", rupeesToPaise(amount));
           if (twin) return twin;
         }
@@ -137,7 +158,7 @@ export function createKhataTools(store: KhataStore, shopName = "your shop") {
       execute: async ({ customerName, amount, method, confirmedNew }, { messages }) => {
         const r = await resolveCustomer(store, customerName);
         if (!r.ok) return r.result;
-        if (!(confirmedNew && ownerWasAskedAboutRepeat(messages, r.customer.name, formatINR(rupeesToPaise(amount))))) {
+        if (!(confirmedNew && repeatConfirmed(messages, r.customer.name, formatINR(rupeesToPaise(amount))))) {
           const twin = await recentTwin(store, r.customer, "payment_received", rupeesToPaise(amount));
           if (twin) return twin;
         }
@@ -324,6 +345,80 @@ export function createKhataTools(store: KhataStore, shopName = "your shop") {
         return habits.enough
           ? { status: "habits", customer: r.customer.name, ...habits }
           : { status: "not_enough_history", customer: r.customer.name, payments: habits.payments, hint: "Say there aren't enough payments yet to see a pattern." };
+      },
+    }),
+
+    askSupplierQuote: tool({
+      description:
+        "Ask the wholesaler's agent for a price quote to restock. Omit items to quote everything below its reorder level. The wholesaler prices it; never state a price it didn't give.",
+      inputSchema: z.object({
+        items: z
+          .array(z.object({ productName: z.string().min(1), quantity: z.number().positive().describe("In the product's own unit, e.g. kg or packets") }))
+          .optional()
+          .describe("What the owner wants to order. Omit to restock everything that is running low."),
+      }),
+      execute: async ({ items }) => {
+        if (!supplier) return NO_SUPPLIER;
+        const products = await store.listProducts();
+        let wanted: QuoteRequestItem[];
+        if (items?.length) {
+          wanted = items.map(({ productName, quantity }) => {
+            const [match] = rankProducts(productName, products);
+            return match ? { name: match.item.name, quantity, unit: match.item.unit } : { name: productName, quantity };
+          });
+        } else {
+          // Top up what's low to twice its reorder level, so it isn't low again next week.
+          wanted = products
+            .filter((p) => p.reorderLevel !== null && p.stockQty <= p.reorderLevel)
+            .map((p) => ({ name: p.name, quantity: Math.max(p.reorderLevel! * 2 - p.stockQty, 1), unit: p.unit }));
+          if (wanted.length === 0) return { status: "nothing_low", hint: "Nothing is below its reorder level. Ask the owner what to order." };
+        }
+        try {
+          const quote = await supplier.quote(wanted, shopName);
+          return {
+            status: quote.quoteId ? "quoted" : "nothing_quoted",
+            supplier: quote.supplier,
+            lines: quote.lines.map((l) => ({ item: l.item, quantity: `${l.quantity} ${l.unit}`, amount: l.amount, ...(l.note ? { note: l.note } : {}) })),
+            unavailable: quote.unavailable,
+            total: quote.total,
+            discount: quote.discount,
+            deliverySlot: quote.deliverySlot,
+            payment: quote.payment,
+            ...(quote.meetsMinimum ? {} : { belowMinimum: `${quote.supplier} takes orders from ${quote.minimumOrder}` }),
+            quoteId: quote.quoteId,
+            hint: "Tell the owner the items, total and delivery, and ask whether to order. Only if they say yes, call placeSupplierOrder.",
+          };
+        } catch (error) {
+          return supplierDown(supplier.name, error);
+        }
+      },
+    }),
+
+    placeSupplierOrder: tool({
+      description:
+        "Order the latest quote from the wholesaler, after the owner said yes to it. The owner also approves it with a button before it is sent.",
+      inputSchema: z.object({}),
+      execute: async (_input, { messages }) => {
+        if (!supplier) return NO_SUPPLIER;
+        // The quote id is a long signed token: taken from the conversation, never retyped by the model.
+        const quoteId = latestQuoteId(messages);
+        if (!quoteId) return { status: "no_quote", hint: "Get a quote with askSupplierQuote first." };
+        if ((readQuote(quoteId)?.expiresAt ?? new Date(0)) < new Date()) return { status: "quote_expired", hint: "The quote has expired. Get a fresh one." };
+        try {
+          const order = await supplier.order(quoteId);
+          await store.saveSupplierOrder({ ...order, quoteId });
+          return {
+            status: "ordered",
+            supplier: order.supplier,
+            orderId: order.orderId,
+            total: order.total,
+            deliverySlot: order.deliverySlot,
+            payment: order.payment,
+            hint: "When the goods arrive, the owner can send a photo of the bill to add them to stock.",
+          };
+        } catch (error) {
+          return supplierDown(supplier.name, error);
+        }
       },
     }),
 

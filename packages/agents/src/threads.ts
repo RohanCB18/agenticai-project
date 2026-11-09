@@ -90,7 +90,9 @@ export function forgetOldToolResults(messages: ModelMessage[]): ModelMessage[] {
 }
 
 function isOpenQuestion(output: { type: string; value?: unknown }) {
-  return output.type === "json" && (output.value as { status?: unknown } | null)?.status === "possible_repeat";
+  // A possible repeat and a supplier quote both wait for the owner's answer in their next message.
+  const status = output.type === "json" ? (output.value as { status?: unknown } | null)?.status : undefined;
+  return status === "possible_repeat" || status === "quoted";
 }
 
 /**

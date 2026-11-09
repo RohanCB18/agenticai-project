@@ -1,5 +1,6 @@
 import { after } from "next/server";
 import { handleInbound } from "@/lib/channels/conversation";
+import { flushTraces } from "@/lib/telemetry";
 import { type TelegramUpdate, TelegramNotConfiguredError, telegramInbound, telegramSender, telegramToken, verifyTelegramSecret } from "@/lib/channels/telegram";
 
 export const maxDuration = 60;
@@ -30,6 +31,8 @@ export async function POST(request: Request) {
       } catch (error) {
         console.error("[munshi] Telegram update failed:", error);
         await telegramSender.sendText(inbound.chatId, "Sorry, something went wrong on my side. Please try again in a minute.").catch(() => {});
+      } finally {
+        await flushTraces();
       }
     });
   }

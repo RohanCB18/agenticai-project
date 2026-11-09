@@ -1,7 +1,9 @@
 import { type Desk, MissingModelKeyError } from "@munshi/agents";
 import { createAgentUIStreamResponse } from "ai";
+import { after } from "next/server";
 import { ApprovalSecretMissingError, buildKhataAgent } from "@/lib/agent";
 import { createClient } from "@/lib/supabase/server";
+import { flushTraces, traced } from "@/lib/telemetry";
 
 export const maxDuration = 60;
 
@@ -34,17 +36,22 @@ export async function POST(request: Request) {
     throw error;
   }
 
-  return createAgentUIStreamResponse({
-    agent,
-    uiMessages: messages,
-    // The chat shows which desk answered.
-    messageMetadata: ({ part }) => (part.type === "finish" && desk ? { desk } : undefined),
-    // Tool and stream errors are masked as "An error occurred." by default. Log the real
-    // cause, and show it in the chat during development so failures are debuggable.
-    onError: (error) => {
-      console.error("[munshi] chat error:", error);
-      if (process.env.NODE_ENV !== "production" && error instanceof Error) return error.message;
-      return "Something went wrong. Please try again.";
-    },
-  });
+  // after() runs once the stream has finished, so the trace is complete before it is sent.
+  after(flushTraces);
+  const streamAgent = agent;
+  return traced({ merchantId: merchant.id, channel: "chat", source: source === "voice" ? "voice" : undefined }, () =>
+    createAgentUIStreamResponse({
+      agent: streamAgent,
+      uiMessages: messages,
+      // The chat shows which desk answered.
+      messageMetadata: ({ part }) => (part.type === "finish" && desk ? { desk } : undefined),
+      // Tool and stream errors are masked as "An error occurred." by default. Log the real
+      // cause, and show it in the chat during development so failures are debuggable.
+      onError: (error) => {
+        console.error("[munshi] chat error:", error);
+        if (process.env.NODE_ENV !== "production" && error instanceof Error) return error.message;
+        return "Something went wrong. Please try again.";
+      },
+    }),
+  );
 }

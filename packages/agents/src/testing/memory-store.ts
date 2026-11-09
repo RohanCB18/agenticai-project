@@ -1,4 +1,5 @@
 import type { Balance, Customer, KhataStore, LedgerEntry, Memory, PaymentCheck, PaymentLink, PaymentQr, Product } from "../store";
+import type { SupplierOrder } from "../supplier";
 
 /** In-memory KhataStore for tests and evals. Mirrors the Supabase semantics. */
 export class MemoryStore implements KhataStore {
@@ -105,5 +106,11 @@ export class MemoryStore implements KhataStore {
 
   async audit(action: string, details: Record<string, unknown>) {
     this.auditLog.push({ action, details });
+  }
+
+  supplierOrders: (SupplierOrder & { quoteId: string })[] = [];
+
+  async saveSupplierOrder(order: SupplierOrder & { quoteId: string }) {
+    if (!this.supplierOrders.some((o) => o.supplier === order.supplier && o.orderId === order.orderId)) this.supplierOrders.push(order);
   }
 }

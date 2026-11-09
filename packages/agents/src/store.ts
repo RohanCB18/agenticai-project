@@ -1,4 +1,5 @@
 import type { Language, LedgerKind, Paise } from "@munshi/db";
+import type { SupplierOrder } from "./supplier";
 
 // The khata agent talks to storage only through this interface, so it can run
 // against Supabase in the app and an in-memory fake in tests.
@@ -41,4 +42,6 @@ export interface KhataStore {
   memories(customerId: string | null): Promise<Memory[]>;
   forget(memoryId: string): Promise<boolean>;
   audit(action: string, details: Record<string, unknown>): Promise<void>;
+  /** Keeps a confirmed wholesaler order. Saving the same order twice keeps one. */
+  saveSupplierOrder(order: SupplierOrder & { quoteId: string }): Promise<void>;
 }

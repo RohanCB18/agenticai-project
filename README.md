@@ -2,7 +2,7 @@
 
 A voice-first AI bookkeeper for Indian shops. A shop owner speaks in Kannada, Hindi, Tamil or Bengali; Munshi keeps the khata, collects udhaar over UPI, manages stock, pays suppliers and handles GST. Every rupee it moves waits for the owner's "haan".
 
-> Status: **Live at https://agenticai-project.vercel.app** (Cashfree sandbox). Phase 3 under way: bill photos, shop memory, specialist desks and udhaar reminders (a durable Vercel Workflow) are done. A khata agent on Sarvam-105B (Claude as fallback) records udhaar, payments, sales and stock, and sends Cashfree UPI payment links after the owner approves. Paid links update the khata through a signed webhook. The owner can tap the mic and speak in any Indian language: Saaras v4 transcribes it (biased toward the shop's customer and product names), and Bulbul speaks the reply back in the same language. The same agent works over **Telegram**: link the shop in one tap, then send voice notes or texts and get spoken replies, with Haan / Nahi buttons for payment links. WhatsApp shares the same channel core and switches on with Meta keys. For a customer at the counter, Munshi shows an exact-amount UPI QR tied to their khata, so the payment lands on the right account by itself.
+> Status: **Live at https://agenticai-project.vercel.app** (Cashfree sandbox). Phase 3 under way: bill photos, shop memory, specialist desks, udhaar reminders (a durable Vercel Workflow), Langfuse tracing, an MCP server (connect the khata to Claude or any MCP host) and restocking from a wholesaler's agent over A2A are done. A khata agent on Sarvam-105B (Claude as fallback) records udhaar, payments, sales and stock, and sends Cashfree UPI payment links after the owner approves. Paid links update the khata through a signed webhook. The owner can tap the mic and speak in any Indian language: Saaras v4 transcribes it (biased toward the shop's customer and product names), and Bulbul speaks the reply back in the same language. The same agent works over **Telegram**: link the shop in one tap, then send voice notes or texts and get spoken replies, with Haan / Nahi buttons for payment links. WhatsApp shares the same channel core and switches on with Meta keys. For a customer at the counter, Munshi shows an exact-amount UPI QR tied to their khata, so the payment lands on the right account by itself.
 
 ## How the agent works
 
@@ -29,12 +29,12 @@ owner message (web chat or Telegram) ──► orchestrator: one sarvam-105b cal
 ## Layout
 
 ```
-apps/web               Next.js 16 app: auth, khata dashboard, chat with tool and approval cards, Cashfree webhook
+apps/web               Next.js 16 app: auth, khata dashboard, chat with tool and approval cards, Cashfree webhook,
+                       reminders workflow, MCP server (/api/mcp) with OAuth consent
 packages/agents        Khata agent, specialist desks and router, tools, memory, receipts, evals, Sarvam→Claude fallback
 packages/db            Shared money helpers (paise), zod schemas, generated DB types
 supabase/              Migrations, seed data, pgTAP RLS tests
-services/mcp           FastMCP server exposing the khata to any MCP host (Phase 5: MCP Apps)
-services/distributor   Wholesaler agent with an A2A Agent Card (Phase 5: LangGraph + A2A tasks)
+services/distributor   Sharma Traders' wholesaler agent: Python, LangGraph, served over A2A 1.0 (a2a-sdk)
 .github/workflows      CI: web, Python and database jobs
 ```
 
@@ -116,6 +116,42 @@ Every evening at 7 pm Munshi works out who should be reminded and asks the owner
 - **One list per shop per day.** Vercel Cron starts a run for each Telegram-linked shop. The run claims a hook token for the shop and the date as it is admitted, so a repeated cron call gets the existing run instead of a second list. The button carries only the date; the shop comes from the linked chat, so no one can answer another shop's list.
 
 The cron needs `CRON_SECRET` in Vercel (Vercel Cron sends it as a Bearer token). `/reminders` works without it.
+
+## Connect Munshi to Claude (MCP)
+
+Munshi is a remote [MCP](https://modelcontextprotocol.io) server at `https://agenticai-project.vercel.app/api/mcp`, so any MCP host (Claude, ChatGPT, an IDE) can read and keep a shop's books: "how much does Ramesh owe?", "Lakshmi paid 300", "send Fatima a payment link".
+
+- **The same tools as Munshi's own agent.** `/api/mcp` serves the khata tools from `packages/agents`, with the same checks: an unknown or ambiguous name, an amount above the balance or the same entry saved minutes ago comes back as a question for the owner. Tools carry MCP hints (read-only, destructive, open-world) so hosts know which ones to confirm. The QR (an image for the counter) and the desks' hand-off stay inside Munshi.
+- **The owner signs in with OAuth, and Supabase Auth is the authorization server.** A host that gets a 401 reads `/.well-known/oauth-protected-resource`, registers itself with Supabase, and sends the owner to Munshi's consent page (`/oauth/consent`) to allow it. The token it gets is a normal Supabase user token, so every query still goes through Row Level Security: a host can only ever see the shop of the owner who allowed it.
+- **Entries are marked.** Ledger entries, stock changes and memories made over MCP have source `mcp`, and payment-link approvals record the host's client id.
+- **Stateless, on Vercel.** Each request builds a fresh server for the caller's shop (MCP TypeScript SDK v2, Streamable HTTP). `src/lib/mcp/server.test.ts` drives it with a real MCP client over HTTP, in process.
+
+To connect in Claude: Settings → Connectors → Add custom connector → `https://agenticai-project.vercel.app/api/mcp`, then sign in to Munshi and tap Allow. In Claude Code: `claude mcp add --transport http munshi https://agenticai-project.vercel.app/api/mcp`, then `/mcp` to sign in.
+
+Supabase setup, once: Authentication → OAuth Server → enable it, set the authorization path to `/oauth/consent` and allow dynamic client registration; the Site URL must be the app's URL; the project must use asymmetric JWT signing keys.
+
+## Restocking from a wholesaler's agent (A2A)
+
+"Wholesaler se dal ka rate pucho" or "jo khatam ho raha hai uska order do" (order what's running out): Munshi's stock desk asks the wholesaler's own agent for a quote, shows it to the owner, and orders only after the owner says yes and taps the button. The two agents are built on different stacks and share only [A2A](https://a2a-protocol.org) (Agent2Agent, protocol 1.0):
+
+| | Munshi | Sharma Traders (the wholesaler) |
+|---|---|---|
+| Code | TypeScript, AI SDK 7 (`apps/web/src/lib/supplier.ts`) | Python, LangGraph (`services/distributor`) |
+| A2A side | Client (`@a2a-js/sdk`): finds the agent from its Agent Card | Server (`a2a-sdk`): Agent Card at `/.well-known/agent-card.json`, JSON-RPC at `/a2a` |
+| Decides | What to reorder (below the reorder level, topped up to twice it), whether to order (the owner) | Prices, pack sizes, stock, discounts, the delivery slot |
+
+- **No model sets a price.** The wholesaler's LangGraph graph (understand → quote / order / help) runs plain code for pricing: whole packs (a 25 kg bag), stock limits, 2% off above ₹5,000, a ₹1,000 minimum, next-morning delivery with a 6 pm cutoff and Sundays off. It also reads plain-text requests from any other agent ("25 kg rice, 48 maggi").
+- **The quote id is a signed JWT.** It holds the exact lines and total. Munshi reads it to show the owner what will be ordered; only the wholesaler can sign one, and it accepts an order only for an unexpired quote it signed. A forged or expired quote is refused, and the same quote always gives the same order id, so neither agent needs a database for quotes.
+- **The model never retypes the quote id.** `placeSupplierOrder` takes the latest quote from the conversation itself, and needs the owner's approval like a payment link. On Telegram the approval lists every item, the total and the delivery slot from the signed quote, not from the model's words. Orders are kept in `supplier_orders`; when the goods arrive, a photo of the bill adds them to stock.
+- **Tested across the wire.** `services/distributor/tests` drive the agent with the official Python A2A client; `apps/web/src/lib/supplier.test.ts` runs Munshi's TypeScript client against the running Python agent (`uv run munshi-distributor`, then `A2A_INTEROP_URL=http://127.0.0.1:8102`).
+
+The supplier tools stay off until `DISTRIBUTOR_URL` points at the wholesaler's agent. In production the wholesaler needs `DISTRIBUTOR_QUOTE_SECRET`, so every instance signs and checks quotes with the same key.
+
+## Observability
+
+Every agent run is a trace in [Langfuse](https://langfuse.com): the router's pick, each model call (prompt, reply, tokens, time) and each tool call with its input and result. Traces are grouped by shop (user) and chat thread (session) and tagged with the channel and `voice`, so a wrong reply on Telegram can be found from the shop and read step by step. Retries are traces of their own, tagged `retry:unbacked-claim` or `retry:empty-reply`, which shows how often the receipt guards fire.
+
+AI SDK 7 has no built-in tracing, so `instrumentation.ts` registers Langfuse's AI SDK integration. Spans are sent as they end and flushed in `after()`, because a Vercel function freezes once it has answered. `src/lib/telemetry.test.ts` checks the spans, and the shop and session on them, with a mock model. Tracing stays off unless `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY` and `LANGFUSE_BASE_URL` are set. Traces hold what the owner said and customer names: for a real shop, self-host Langfuse (it is open source) or use a region the shop agrees to.
 
 ## Memory
 

@@ -31,6 +31,8 @@ const ALL_TOOLS: KhataToolName[] = [
   "showPaymentQr",
   "checkPayment",
   "paymentHabits",
+  "askSupplierQuote",
+  "placeSupplierOrder",
   ...MEMORY_TOOLS,
 ];
 
@@ -44,6 +46,7 @@ const RULES = {
   check: `"X ka payment aaya?" or "did X pay?" means checkPayment.`,
   habits: `For payment patterns ("X kab deti hai?"), use paymentHabits rather than memory or guesses.`,
   stock: `Stock that arrived ("10 packet Maggi aaya") is updateStock with a positive change; stock sold or used up is a negative change. "Kya khatam ho raha hai?" means getStock. Owners name items in their own language (akki, chawal, sakkare): check getStock before deciding a word is a customer's name.`,
+  restock: `To restock, askSupplierQuote gets a quote from the wholesaler's agent (omit items to quote everything running low). Tell the owner the items, the total and the delivery slot, and what the wholesaler can't supply. Only after the owner says yes, call placeSupplierOrder; the owner then approves it with a button. Never state a price the quote didn't give.`,
   memory: `When the owner tells you a lasting fact or a preference ("Ramesh is Lakshmi's husband", "call me Akka", "Fatima pays on Saturdays"), save it with remember. Before answering about a customer's background, check recall and repeat what it says without adding to it: "the owner" in a fact means the person you are talking to, so say "your", and any other name is someone else.`,
 };
 
@@ -61,13 +64,13 @@ export const SPECIALISTS: Record<Exclude<Desk, "general">, Specialist> = {
     rules: [RULES.payment, RULES.link, RULES.qr, RULES.check, RULES.habits, RULES.memory],
   },
   stock: {
-    purpose: "stock: what is left, what arrived, what sold and what is running low",
-    tools: ["getStock", "updateStock", "recordSale", ...MEMORY_TOOLS],
-    rules: [RULES.stock, RULES.memory],
+    purpose: "stock: what is left, what arrived, what sold, what is running low, and reordering from the wholesaler",
+    tools: ["getStock", "updateStock", "recordSale", "askSupplierQuote", "placeSupplierOrder", ...MEMORY_TOOLS],
+    rules: [RULES.stock, RULES.restock, RULES.memory],
   },
 };
 
-const GENERAL_RULES = [RULES.credit, RULES.payment, RULES.link, RULES.qr, RULES.check, RULES.habits, RULES.stock, RULES.memory];
+const GENERAL_RULES = [RULES.credit, RULES.payment, RULES.link, RULES.qr, RULES.check, RULES.habits, RULES.stock, RULES.restock, RULES.memory];
 
 const CORE_RULES = [
   "Use tools for every fact about money or stock. Never guess balances or invent customers.",
@@ -164,8 +167,8 @@ khata: udhaar given, money a customer handed over in cash, sales, expenses, who 
   "Suresh ne 300 ka samaan liya", "सुरेश ने 500 रुपये दिए", "Lakshmi 200 kottlu", "Kal 900 ka dhanda hua", "Dukaan ka kiraya 5000 diya", "Lakshmi ku evvalavu baaki?"
 collections: getting paid over UPI: sending a payment link, showing a QR code, checking whether an online payment arrived, when a customer usually pays.
   "Suresh ko link bhej do", "Lakshmi ka QR banao", "Suresh ne online bheja kya?", "Lakshmi aam taur par kab paisa deti hai?"
-stock: how much of an item is left, stock that arrived or sold, what is running low.
-  "Atta kitna hai?", "Sakkare eshtu ide?", "20 packet biscuit aaye", "Tel 2 litre bika"
+stock: how much of an item is left, stock that arrived or sold, what is running low, ordering more from the wholesaler.
+  "Atta kitna hai?", "Sakkare eshtu ide?", "20 packet biscuit aaye", "Tel 2 litre bika", "Wholesaler se dal ka rate pucho"
 general: greetings, thanks, remembering or recalling facts, anything else, or a message that needs more than one desk.
   "Hello ji", "Yaad rakhna, Suresh Monday ko aata hai", "Lakshmi kaun hai?"
 
@@ -211,6 +214,7 @@ export async function routeMessage(model: LanguageModel, messages: ModelMessage[
       maxRetries: 0, // "general" right away beats retrying a router call while the owner waits
       providerOptions: { sarvam: { reasoningEffort: "none" } },
       abortSignal: AbortSignal.timeout(5000),
+      telemetry: { functionId: "desk-router" },
     });
     const desk = result.text.toLowerCase().match(/khata|collections|stock|general/)?.[0] as Desk | undefined;
     const tokens = (result.totalUsage.inputTokens ?? 0) + (result.totalUsage.outputTokens ?? 0);

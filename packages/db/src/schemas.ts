@@ -14,7 +14,7 @@ export const LedgerKind = z.enum([
 ]);
 export type LedgerKind = z.infer<typeof LedgerKind>;
 
-export const EntrySource = z.enum(["voice", "chat", "whatsapp", "webhook", "system"]);
+export const EntrySource = z.enum(["voice", "chat", "whatsapp", "telegram", "webhook", "system", "mcp"]);
 export type EntrySource = z.infer<typeof EntrySource>;
 
 export const ApprovalStatus = z.enum(["pending", "approved", "rejected", "expired", "executed", "failed"]);

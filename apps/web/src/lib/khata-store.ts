@@ -41,7 +41,7 @@ const toProduct = (r: ProductRow): Product => ({
  * also scopes every query; channels with no browser session (WhatsApp) pass the admin client.
  * Every query filters by merchant explicitly so the store is safe with either.
  */
-export function createSupabaseKhataStore(db: SupabaseClient, merchantId: string, opts: { source: "chat" | "voice" | "telegram" | "whatsapp"; traceId?: string; actor?: string }): KhataStore {
+export function createSupabaseKhataStore(db: SupabaseClient, merchantId: string, opts: { source: "chat" | "voice" | "telegram" | "whatsapp" | "mcp"; traceId?: string; actor?: string }): KhataStore {
   /** A failed cancel is logged, never fatal: the entry or new request matters more. */
   async function closeOpenRequests(customerId: string) {
     try {
@@ -254,6 +254,24 @@ export function createSupabaseKhataStore(db: SupabaseClient, merchantId: string,
 
     async audit(action, details) {
       await db.from("audit_log").insert({ merchant_id: merchantId, actor, action, details, trace_id: opts.traceId });
+    },
+
+    async saveSupplierOrder(order) {
+      const { error } = await db.from("supplier_orders").upsert(
+        {
+          merchant_id: merchantId,
+          supplier: order.supplier,
+          order_ref: order.orderId,
+          quote_id: order.quoteId,
+          lines: order.lines,
+          total_paise: order.totalPaise,
+          delivery_slot: order.deliverySlot,
+          payment: order.payment,
+        },
+        { onConflict: "merchant_id,supplier,order_ref", ignoreDuplicates: true },
+      );
+      if (error) throw new Error(`Save supplier order failed: ${error.message}`);
+      await store.audit("supplier_order_placed", { supplier: order.supplier, orderId: order.orderId, totalPaise: order.totalPaise });
     },
   };
   return store;

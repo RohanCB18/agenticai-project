@@ -3,6 +3,7 @@ import { type Channel, createKhataAgent, detectLanguage, resolveModel, type Rout
 import type { Language } from "@munshi/db";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { createSupabaseKhataStore } from "@/lib/khata-store";
+import { configuredSupplier } from "@/lib/supplier";
 
 export class ApprovalSecretMissingError extends Error {
   constructor() {
@@ -52,5 +53,7 @@ export function buildKhataAgent(opts: {
       opts.onRoute?.(route);
     },
     detectLanguage: sarvamApiKey ? (text) => detectLanguage({ apiKey: sarvamApiKey, text }) : undefined,
+    // The wholesaler's A2A agent, when DISTRIBUTOR_URL is set.
+    supplier: configuredSupplier(),
   });
 }

@@ -2,7 +2,8 @@ import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 import { env } from "@/lib/env";
 
-const PUBLIC_PATHS = ["/", "/login", "/auth"];
+// /.well-known: OAuth discovery for MCP hosts, read without a session.
+const PUBLIC_PATHS = ["/", "/login", "/auth", "/.well-known"];
 
 function isPublic(pathname: string) {
   return PUBLIC_PATHS.some((p) => pathname === p || (p !== "/" && pathname.startsWith(`${p}/`)));
@@ -35,7 +36,9 @@ export async function updateSession(request: NextRequest) {
   if (!signedIn && !isApi && !isPublic(request.nextUrl.pathname)) {
     const url = request.nextUrl.clone();
     url.pathname = "/login";
-    url.searchParams.set("next", request.nextUrl.pathname);
+    // Keep the query: the OAuth consent page needs its authorization_id after sign-in.
+    url.search = "";
+    url.searchParams.set("next", request.nextUrl.pathname + request.nextUrl.search);
     return NextResponse.redirect(url);
   }
 

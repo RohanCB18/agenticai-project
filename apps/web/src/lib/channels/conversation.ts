@@ -12,6 +12,9 @@ import {
   UNBACKED_CLAIM_NOTE,
   type PendingApproval,
   pendingApprovals,
+  latestQuoteId,
+  quoteLines,
+  readQuote,
   SARVAM_LANGUAGE,
   synthesize,
   toolOutputs,
@@ -26,6 +29,7 @@ import { BILL_APPROVAL_PREFIX, decideBill, handleBillPhoto } from "@/lib/bills";
 import { answerReminders, startReminders } from "@/lib/reminder-runs";
 import { paymentNote, whatsappButton } from "@/lib/reminders";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { traced } from "@/lib/telemetry";
 import { ON_DEMAND_KEY, REMINDER_APPROVAL_PREFIX } from "@/workflows/reminder-hook";
 import type { ChannelSender, Inbound, LinkButton, MessagingChannel } from "./types";
 
@@ -122,8 +126,9 @@ export async function handleInbound(inbound: Inbound, sender: ChannelSender) {
   await sender.showWorking?.(chatId, "typing");
   const agentFor = (extraNote?: string) =>
     buildKhataAgent({ db: admin, merchant: { id: merchant.id, shopName: merchant.shop_name, language }, source: channel, channel, extraNote });
-  const agent = agentFor();
-  const result = await agent.generate({ messages });
+  // Each run is one Langfuse trace, under this shop and chat. Retries are tagged with why.
+  const trace = { merchantId: merchant.id, channel, source: replyLanguage ? "voice" : undefined };
+  const result = await traced(trace, () => agentFor().generate({ messages }));
   console.info(`[munshi] ${channel} run: ${runSummary(result)}`);
   let responseMessages = result.responseMessages;
   let text = result.text.trim();
@@ -132,7 +137,7 @@ export async function handleInbound(inbound: Inbound, sender: ChannelSender) {
   // message, told what went wrong. If it still claims without acting, say so plainly.
   if (claimsUnbackedAction(text, completedActions(responseMessages))) {
     console.warn("[munshi] reply claimed an action no tool took; retrying:", text);
-    const retry = await agentFor(UNBACKED_CLAIM_NOTE).generate({ messages });
+    const retry = await traced({ ...trace, reason: "retry:unbacked-claim" }, () => agentFor(UNBACKED_CLAIM_NOTE).generate({ messages }));
     console.info(`[munshi] ${channel} retry run: ${runSummary(retry)}`);
     responseMessages = retry.responseMessages;
     text = retry.text.trim();
@@ -141,7 +146,7 @@ export async function handleInbound(inbound: Inbound, sender: ChannelSender) {
   // The model sometimes ends with no words at all. Give it one more turn with any tool results in
   // hand, told its answer was empty: asked again with nothing new, it came back empty again.
   if (!text && pendingApprovals([...messages, ...responseMessages]).length === 0) {
-    const retry = await agentFor(EMPTY_REPLY_NOTE).generate({ messages: [...messages, ...responseMessages] });
+    const retry = await traced({ ...trace, reason: "retry:empty-reply" }, () => agentFor(EMPTY_REPLY_NOTE).generate({ messages: [...messages, ...responseMessages] }));
     console.warn(`[munshi] ${channel} empty reply; asked again: ${runSummary(retry)}`);
     responseMessages = [...responseMessages, ...retry.responseMessages];
     text = retry.text.trim() || "Sorry, I couldn't put that into words. Please ask again.";
@@ -181,7 +186,8 @@ export async function handleInbound(inbound: Inbound, sender: ChannelSender) {
     if (replyLanguage && text) await speakReply(sender, chatId, text, replyLanguage);
   }
   for (const approval of pendingApprovals(messages)) {
-    await sender.sendApproval(chatId, approvalPrompt(approval), approval.approvalId);
+    const supplierOrder = approval.toolName === "placeSupplierOrder";
+    await sender.sendApproval(chatId, approvalPrompt(approval, messages), approval.approvalId, supplierOrder ? { yes: "✅ Haan, order karo", no: "❌ Nahi" } : undefined);
   }
 }
 
@@ -255,7 +261,15 @@ async function speakReply(sender: ChannelSender, chatId: string, text: string, l
   }
 }
 
-function approvalPrompt(approval: PendingApproval) {
+function approvalPrompt(approval: PendingApproval, messages: ModelMessage[]) {
+  if (approval.toolName === "placeSupplierOrder") {
+    // Read from the wholesaler's signed quote, so the owner approves exactly what will be ordered.
+    const quoteId = latestQuoteId(messages);
+    const quote = quoteId ? readQuote(quoteId) : null;
+    const supplier = (toolOutputs(messages, "askSupplierQuote").at(-1) as { supplier?: string } | undefined)?.supplier ?? "the wholesaler";
+    if (!quote) return `🔐 Needs your OK\n\nOrder the latest quote from ${supplier}?`;
+    return [`🔐 Needs your OK`, "", `Order from ${supplier}:`, ...quoteLines(quote.lines), "", `Total ${quote.total}`, `Delivery ${quote.deliverySlot}, pay on delivery`].join("\n");
+  }
   if (approval.toolName === "sendPaymentLink") {
     const { customerName, amount } = (approval.input ?? {}) as { customerName?: string; amount?: number };
     const what = amount ? formatINR(rupeesToPaise(amount)) : "their full balance";
