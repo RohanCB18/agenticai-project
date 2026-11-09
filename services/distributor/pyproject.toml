@@ -17,7 +17,7 @@ munshi-distributor = "munshi_distributor.app:main"
 
 # Vercel's Python runtime serves this FastAPI app (the A2A agent card and JSON-RPC endpoint).
 [tool.vercel]
-entrypoint = "munshi_distributor.app:app"
+entrypoint = "main:app"  # main.py puts src/ on the path
 
 [build-system]
 requires = ["hatchling"]
