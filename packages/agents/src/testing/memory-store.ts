@@ -108,6 +108,13 @@ export class MemoryStore implements KhataStore {
     this.auditLog.push({ action, details });
   }
 
+  async setReorderLevel(productId: string, level: number | null) {
+    const product = this.products.find((p) => p.id === productId);
+    if (!product) throw new Error(`No product ${productId}`);
+    product.reorderLevel = level;
+    return product;
+  }
+
   supplierOrders: (SupplierOrder & { quoteId: string })[] = [];
 
   async saveSupplierOrder(order: SupplierOrder & { quoteId: string }) {

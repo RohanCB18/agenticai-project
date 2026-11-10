@@ -31,6 +31,8 @@ export interface KhataStore {
   recentEntries(limit: number, customerId?: string): Promise<LedgerEntry[]>;
   listProducts(): Promise<Product[]>;
   moveStock(input: { productId: string; delta: number; reason: string }): Promise<Product>;
+  /** The stock level at or below which a product counts as running low; null removes the alert. */
+  setReorderLevel(productId: string, level: number | null): Promise<Product>;
   /** Creates a Cashfree link and records it. Only called after the owner approved. */
   createPaymentLink(input: { customer: Customer; amountPaise: Paise; purpose: string }): Promise<PaymentLink>;
   /** Creates an exact-amount UPI QR for a customer at the counter. Throws if Cashfree can't issue one. */

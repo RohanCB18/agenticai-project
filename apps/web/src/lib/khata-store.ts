@@ -122,6 +122,21 @@ export function createSupabaseKhataStore(db: SupabaseClient, merchantId: string,
       );
     },
 
+    async setReorderLevel(productId, level) {
+      return toProduct(
+        must(
+          await db
+            .from("products")
+            .update({ reorder_level: level })
+            .eq("id", productId)
+            .eq("merchant_id", merchantId)
+            .select("id, name, aliases, unit, stock_qty, reorder_level, price_paise")
+            .single(),
+          "Set reorder level",
+        ) as ProductRow,
+      );
+    },
+
     async createPaymentLink({ customer, amountPaise, purpose }): Promise<PaymentLink> {
       if (!customer.phone) throw new Error("Customer has no phone number");
 

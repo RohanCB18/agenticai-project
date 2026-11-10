@@ -27,6 +27,7 @@ const ALL_TOOLS: KhataToolName[] = [
   "getBalances",
   "getStock",
   "updateStock",
+  "setReorderLevel",
   "sendPaymentLink",
   "showPaymentQr",
   "checkPayment",
@@ -45,7 +46,7 @@ const RULES = {
   qr: `Any request for a QR ("QR dikhao", "X ka QR", "scan karega"), or a customer who is in the shop ("yahan khada hai"), means call showPaymentQr, without asking first or looking up the balance. Never offer a link when the owner asked for a QR. Only after it returns qr_ready, tell the owner the QR is on screen. If it reports qr_unavailable, offer a payment link.`,
   check: `"X ka payment aaya?" or "did X pay?" means checkPayment.`,
   habits: `For payment patterns ("X kab deti hai?"), use paymentHabits rather than memory or guesses.`,
-  stock: `Stock that arrived ("10 packet Maggi aaya") is updateStock with a positive change; stock sold or used up is a negative change. "Kya khatam ho raha hai?" means getStock. Owners name items in their own language (akki, chawal, sakkare): check getStock before deciding a word is a customer's name.`,
+  stock: `Stock that arrived ("10 packet Maggi aaya") is updateStock with a positive change; stock sold or used up is a negative change. "Kya khatam ho raha hai?" means getStock. "Rice 10 kg pe alert karna" (tell me when rice is down to 10 kg) means setReorderLevel. Owners name items in their own language (akki, chawal, sakkare): check getStock before deciding a word is a customer's name.`,
   restock: `To restock, askSupplierQuote gets a quote from the wholesaler's agent (omit items to quote everything running low). Tell the owner the items, the total and the delivery slot, and what the wholesaler can't supply. Only after the owner says yes, call placeSupplierOrder; the owner then approves it with a button. Never state a price the quote didn't give.`,
   memory: `When the owner tells you a lasting fact or a preference ("Ramesh is Lakshmi's husband", "call me Akka", "Fatima pays on Saturdays"), save it with remember. Before answering about a customer's background, check recall and repeat what it says without adding to it: "the owner" in a fact means the person you are talking to, so say "your", and any other name is someone else.`,
 };
@@ -65,7 +66,7 @@ export const SPECIALISTS: Record<Exclude<Desk, "general">, Specialist> = {
   },
   stock: {
     purpose: "stock: what is left, what arrived, what sold, what is running low, and reordering from the wholesaler",
-    tools: ["getStock", "updateStock", "recordSale", "askSupplierQuote", "placeSupplierOrder", ...MEMORY_TOOLS],
+    tools: ["getStock", "updateStock", "setReorderLevel", "recordSale", "askSupplierQuote", "placeSupplierOrder", ...MEMORY_TOOLS],
     rules: [RULES.stock, RULES.restock, RULES.memory],
   },
 };

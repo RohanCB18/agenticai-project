@@ -237,6 +237,26 @@ export function createKhataTools(store: KhataStore, shopName = "your shop", opti
       },
     }),
 
+    setReorderLevel: tool({
+      description:
+        "Set the stock level at which a product counts as running low, e.g. 'Rice 10 kg pe alert karna' is 10. Use 0 to remove the alert. Low products show in getStock and are what askSupplierQuote restocks.",
+      inputSchema: z.object({ productName: z.string(), level: z.number().min(0).describe("In the product's own unit; 0 removes the alert") }),
+      execute: async ({ productName, level }) => {
+        const matches = rankProducts(productName, await store.listProducts());
+        const [match] = matches;
+        if (!match) return { status: "product_not_found", productName };
+        if (tooClose(matches)) return { status: "ambiguous_product", candidates: matches.slice(0, 3).map((m) => m.item.name), hint: "Ask the owner which product." };
+        const product = await store.setReorderLevel(match.item.id, level > 0 ? level : null);
+        return {
+          status: "alert_set",
+          product: product.name,
+          alertAt: product.reorderLevel === null ? null : `${product.reorderLevel} ${product.unit}`,
+          stock: `${product.stockQty} ${product.unit}`,
+          low: product.reorderLevel !== null && product.stockQty <= product.reorderLevel,
+        };
+      },
+    }),
+
     sendPaymentLink: tool({
       description:
         "Send a customer a UPI payment link (via Cashfree) to collect their udhaar. Moves real money, so the owner must approve it first. Omit amount to request the full outstanding balance.",

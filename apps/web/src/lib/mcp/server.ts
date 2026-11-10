@@ -22,6 +22,7 @@ const EXPOSED: Record<string, { title: string; annotations: Annotations }> = {
   recordPayment: { title: "Record a payment", annotations: { readOnlyHint: false, destructiveHint: false } },
   recordSale: { title: "Record a sale or expense", annotations: { readOnlyHint: false, destructiveHint: false } },
   updateStock: { title: "Change stock", annotations: { readOnlyHint: false, destructiveHint: false } },
+  setReorderLevel: { title: "Set a low-stock alert", annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true } },
   remember: { title: "Remember a fact", annotations: { readOnlyHint: false, destructiveHint: false } },
   forget: { title: "Forget a fact", annotations: { readOnlyHint: false, destructiveHint: true } },
   // Sends the customer a real UPI link (and an SMS, in production).

@@ -6,7 +6,7 @@ import type { ModelMessage } from "ai";
 export type Action = { tool: string; output: Record<string, unknown> };
 
 /** Statuses a write tool returns only after the change is saved. */
-const DONE = new Set(["added", "recorded", "updated", "sent", "qr_ready", "payment_received", "remembered", "forgotten", "ordered"]);
+const DONE = new Set(["added", "recorded", "updated", "sent", "qr_ready", "payment_received", "remembered", "forgotten", "ordered", "alert_set"]);
 
 /** Write actions that succeeded in these messages. */
 export function completedActions(messages: ModelMessage[]): Action[] {
@@ -44,6 +44,8 @@ export function receiptLines(actions: Action[]): string[] {
         return [`🧾 Remembered (${s(output.about)}): ${s(output.fact)}`];
       case "forget":
         return ["🧾 Forgotten"];
+      case "setReorderLevel":
+        return [output.alertAt ? `🧾 Alert: ${s(output.product)} at ${s(output.alertAt)} (now ${s(output.stock)})` : `🧾 Alert removed: ${s(output.product)}`];
       case "placeSupplierOrder":
         return [`🚚 Order ${s(output.orderId)} to ${s(output.supplier)}: ${s(output.total)} · delivery ${s(output.deliverySlot)}`];
       case "addCustomer": {

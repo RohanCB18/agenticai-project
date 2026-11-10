@@ -20,6 +20,7 @@ const LABELS: Record<string, string> = {
   getBalances: "Dues",
   getStock: "Stock",
   updateStock: "Stock updated",
+  setReorderLevel: "Low-stock alert",
   sendPaymentLink: "UPI payment link",
   askSupplierQuote: "Wholesaler quote",
   placeSupplierOrder: "Wholesaler order",

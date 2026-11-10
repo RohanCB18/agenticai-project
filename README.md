@@ -138,7 +138,7 @@ Supabase setup, once: Authentication → OAuth Server → enable it, set the aut
 |---|---|---|
 | Code | TypeScript, AI SDK 7 (`apps/web/src/lib/supplier.ts`) | Python, LangGraph (`services/distributor`) |
 | A2A side | Client (`@a2a-js/sdk`): finds the agent from its Agent Card | Server (`a2a-sdk`): Agent Card at `/.well-known/agent-card.json`, JSON-RPC at `/a2a` |
-| Decides | What to reorder (below the reorder level, topped up to twice it), whether to order (the owner) | Prices, pack sizes, stock, discounts, the delivery slot |
+| Decides | What to reorder (below the low-stock alert the owner set by voice, "Rice 10 kg pe alert karna", topped up to twice it), whether to order (the owner) | Prices, pack sizes, stock, discounts, the delivery slot |
 
 - **No model sets a price.** The wholesaler's LangGraph graph (understand → quote / order / help) runs plain code for pricing: whole packs (a 25 kg bag), stock limits, 2% off above ₹5,000, a ₹1,000 minimum, next-morning delivery with a 6 pm cutoff and Sundays off. It also reads plain-text requests from any other agent ("25 kg rice, 48 maggi").
 - **The quote id is a signed JWT.** It holds the exact lines and total. Munshi reads it to show the owner what will be ordered; only the wholesaler can sign one, and it accepts an order only for an unexpired quote it signed. A forged or expired quote is refused, and the same quote always gives the same order id, so neither agent needs a database for quotes.
