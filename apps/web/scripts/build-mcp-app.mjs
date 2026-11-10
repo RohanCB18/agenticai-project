@@ -1,0 +1,80 @@
+// Bundles the khata card (src/mcp-app/khata-view.ts) into one self-contained HTML page, as MCP
+// Apps hosts need: no external scripts, styles or fonts. Writes src/lib/mcp/khata-view.generated.ts.
+// Run with `npm run build:mcp-app -w @munshi/web` after changing the view.
+
+import { build } from "esbuild";
+import { writeFile } from "node:fs/promises";
+import { fileURLToPath } from "node:url";
+
+const here = (path) => fileURLToPath(new URL(path, import.meta.url));
+
+const CSS = `
+:root { color-scheme: light dark; --bg: #ffffff; --fg: #1d1d1b; --muted: #6b6a66; --line: #e6e4de; --accent: #4f46e5; --on-accent: #ffffff; --bar: #ece9ff; --danger: #b42318; }
+@media (prefers-color-scheme: dark) { :root { --bg: #1f1f1d; --fg: #f2f1ec; --muted: #a3a29c; --line: #34332f; --accent: #8b85ff; --on-accent: #12121a; --bar: #2c2a45; --danger: #ff8a7a; } }
+[data-theme="light"] { --bg: #ffffff; --fg: #1d1d1b; --muted: #6b6a66; --line: #e6e4de; --accent: #4f46e5; --on-accent: #ffffff; --bar: #ece9ff; --danger: #b42318; }
+[data-theme="dark"] { --bg: #1f1f1d; --fg: #f2f1ec; --muted: #a3a29c; --line: #34332f; --accent: #8b85ff; --on-accent: #12121a; --bar: #2c2a45; --danger: #ff8a7a; }
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--color-background-primary, var(--bg)); color: var(--color-text-primary, var(--fg)); font: 14px/1.45 var(--font-sans, system-ui, sans-serif); }
+#root { padding: 16px; display: flex; flex-direction: column; gap: 12px; }
+header { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.eyebrow { margin: 0; font-size: 11px; letter-spacing: .06em; text-transform: uppercase; color: var(--color-text-secondary, var(--muted)); }
+.total { margin: 2px 0; font-size: 28px; font-weight: 650; font-variant-numeric: tabular-nums; }
+.muted { margin: 0; color: var(--color-text-secondary, var(--muted)); }
+.small { font-size: 12px; }
+.empty { margin: 0; color: var(--color-text-secondary, var(--muted)); }
+.rows { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
+.row { display: flex; gap: 12px; align-items: center; padding: 10px 0; border-top: 1px solid var(--color-border-primary, var(--line)); }
+.info { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.line { display: flex; justify-content: space-between; gap: 8px; }
+.name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.amount { font-weight: 600; font-variant-numeric: tabular-nums; }
+.bar { height: 6px; border-radius: 3px; background: var(--bar); overflow: hidden; }
+.fill { height: 100%; border-radius: 3px; background: var(--accent); }
+.action { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; min-width: 110px; }
+button { font: inherit; border-radius: 8px; padding: 6px 12px; cursor: pointer; border: 1px solid var(--color-border-primary, var(--line)); background: transparent; color: inherit; }
+button.primary { background: var(--accent); color: var(--on-accent); border-color: transparent; font-weight: 600; }
+button.link { border: none; padding: 0; color: var(--accent); text-decoration: underline; background: none; }
+button:disabled { opacity: .6; cursor: default; }
+.error { margin: 0; color: var(--danger); text-align: right; }
+.low { display: flex; flex-direction: column; gap: 6px; padding-top: 4px; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip { font-size: 12px; padding: 3px 8px; border-radius: 999px; border: 1px solid var(--color-border-primary, var(--line)); }
+`;
+
+// The SDK brings zod, and zod's index pulls in its error messages in 60-odd languages. The card
+// never shows a zod error, so every language but English becomes an empty stub (~a third of the size).
+const englishZodOnly = {
+  name: "english-zod-only",
+  setup(builder) {
+    builder.onResolve({ filter: /locales[\\/][a-zA-Z-]+\.js$/ }, (args) =>
+      args.importer.includes("zod") && !/[\\/]en\.js$/.test(args.path) ? { path: args.path, namespace: "zod-locale-stub" } : undefined,
+    );
+    builder.onLoad({ filter: /.*/, namespace: "zod-locale-stub" }, () => ({ contents: "export default function () { return { localeError: () => undefined }; }", loader: "js" }));
+  },
+};
+
+export async function bundleKhataView() {
+  const result = await build({
+    entryPoints: [here("../src/mcp-app/khata-view.ts")],
+    bundle: true,
+    format: "esm",
+    platform: "browser",
+    target: "es2022",
+    minify: true,
+    legalComments: "none",
+    write: false,
+    plugins: [englishZodOnly],
+  });
+  const js = result.outputFiles[0].text.replaceAll("</script", "<\\/script");
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Munshi khata</title><style>${CSS.trim()}</style></head><body><div id="root"></div><script type="module">${js}</script></body></html>`;
+}
+
+export function moduleSource(html) {
+  return `// Generated by scripts/build-mcp-app.mjs from src/mcp-app/khata-view.ts. Do not edit by hand.\nexport const KHATA_VIEW_HTML = ${JSON.stringify(html)};\n`;
+}
+
+if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
+  const html = await bundleKhataView();
+  await writeFile(here("../src/lib/mcp/khata-view.generated.ts"), moduleSource(html));
+  console.log(`khata view: ${Math.round(html.length / 1024)} KB`);
+}

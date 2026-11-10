@@ -46,7 +46,9 @@ export class MemoryStore implements KhataStore {
           (sum, e) => sum + (e.kind === "credit_given" ? e.amountPaise : e.kind === "payment_received" ? -e.amountPaise : 0),
           0,
         );
-        return { customerId: c.id, name: c.name, outstandingPaise, lastCreditAt: null, lastPaymentAt: null };
+        // Like the customer_balances view: the latest credit and payment, or null.
+        const latest = (kind: string) => mine.filter((e) => e.kind === kind).map((e) => e.createdAt).sort().at(-1) ?? null;
+        return { customerId: c.id, name: c.name, outstandingPaise, lastCreditAt: latest("credit_given"), lastPaymentAt: latest("payment_received") };
       });
   }
 

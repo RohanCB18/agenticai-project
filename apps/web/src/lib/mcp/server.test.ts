@@ -40,7 +40,7 @@ describe("Munshi MCP server", () => {
   it("lists the khata tools with hints for the host, and none of Munshi's internal ones", async () => {
     const c = await connect(await shop());
     const { tools } = await c.listTools();
-    expect(tools.map((t) => t.name).sort()).toEqual([...MCP_TOOL_NAMES].sort());
+    expect(tools.map((t) => t.name).sort()).toEqual([...MCP_TOOL_NAMES, "showKhata"].sort());
     expect(tools.map((t) => t.name)).not.toContain("handOff");
     expect(tools.map((t) => t.name)).not.toContain("showPaymentQr");
     const byName = Object.fromEntries(tools.map((t) => [t.name, t]));

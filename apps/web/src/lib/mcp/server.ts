@@ -1,5 +1,6 @@
 import { createKhataTools, type KhataStore } from "@munshi/agents";
 import { McpServer, type StandardSchemaWithJSON } from "@modelcontextprotocol/server";
+import { registerKhataCard } from "./khata-card";
 
 // The khata as an MCP server, so any MCP host (Claude, ChatGPT, an IDE) can read and keep a
 // shop's books. These are the same tools Munshi's own agent uses, with the same checks: an
@@ -35,7 +36,7 @@ export const MCP_TOOL_NAMES = Object.keys(EXPOSED);
 function instructions(shopName: string) {
   return [
     `Munshi keeps the khata (credit ledger), sales and stock of ${shopName}, a small shop in India. Amounts are in rupees.`,
-    "Use getBalances, getStock and findCustomer for facts; never guess what someone owes.",
+    "Use getBalances, getStock and findCustomer for facts; never guess what someone owes. For an overview of who owes what, showKhata shows an interactive card.",
     "If a tool returns customer_not_found, ambiguous_customer, product_not_found, ambiguous_product, exceeds_balance or possible_repeat, ask the owner instead of retrying with a guess.",
     "possible_repeat means the same entry was saved minutes ago: call again with confirmedNew: true only after the owner says it is a new one.",
     "sendPaymentLink sends the customer a real UPI payment link. Confirm the customer and amount with the owner first.",
@@ -74,5 +75,6 @@ export function createMunshiMcpServer({ store, shopName }: { store: KhataStore; 
       },
     );
   }
+  registerKhataCard(server, store, shopName);
   return server;
 }
