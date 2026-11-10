@@ -95,6 +95,7 @@ const NO_SUPPLIER = { status: "no_supplier", hint: "Tell the owner no wholesaler
 
 function supplierDown(name: string, error: unknown) {
   if (error instanceof SupplierError) return { status: error.code, supplier: name, message: error.message };
+  console.error("[munshi] wholesaler agent call failed:", error instanceof Error ? error.message : error);
   return { status: "supplier_unavailable", supplier: name, hint: "The wholesaler's agent didn't answer. Tell the owner to try again in a few minutes." };
 }
 
@@ -424,21 +425,29 @@ export function createKhataTools(store: KhataStore, shopName = "your shop", opti
         const quoteId = latestQuoteId(messages);
         if (!quoteId) return { status: "no_quote", hint: "Get a quote with askSupplierQuote first." };
         if ((readQuote(quoteId)?.expiresAt ?? new Date(0)) < new Date()) return { status: "quote_expired", hint: "The quote has expired. Get a fresh one." };
+        let order;
         try {
-          const order = await supplier.order(quoteId);
-          await store.saveSupplierOrder({ ...order, quoteId });
-          return {
-            status: "ordered",
-            supplier: order.supplier,
-            orderId: order.orderId,
-            total: order.total,
-            deliverySlot: order.deliverySlot,
-            payment: order.payment,
-            hint: "When the goods arrive, the owner can send a photo of the bill to add them to stock.",
-          };
+          order = await supplier.order(quoteId);
         } catch (error) {
           return supplierDown(supplier.name, error);
         }
+        const placed = {
+          status: "ordered",
+          supplier: order.supplier,
+          orderId: order.orderId,
+          total: order.total,
+          deliverySlot: order.deliverySlot,
+          payment: order.payment,
+        };
+        // The wholesaler has the order now. A failure to keep our copy must not read as "not ordered":
+        // live, a missing table made a confirmed order look like the wholesaler never answered.
+        try {
+          await store.saveSupplierOrder({ ...order, quoteId });
+        } catch (error) {
+          console.error("[munshi] supplier order placed but not saved:", error instanceof Error ? error.message : error);
+          return { ...placed, notSaved: true, hint: `The order is placed with ${order.supplier}, but Munshi couldn't keep a copy. Give the owner the order id.` };
+        }
+        return { ...placed, hint: "When the goods arrive, the owner can send a photo of the bill to add them to stock." };
       },
     }),
 

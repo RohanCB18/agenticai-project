@@ -126,6 +126,17 @@ describe("placeSupplierOrder", () => {
     expect(store.supplierOrders).toHaveLength(1); // the wholesaler gives the same order id; it's kept once
   });
 
+  it("says the order is placed when only saving our copy failed", async () => {
+    // Live, the supplier_orders table wasn't there yet and a confirmed order read as "the wholesaler didn't answer".
+    store.saveSupplierOrder = async () => {
+      throw new Error('relation "public.supplier_orders" does not exist');
+    };
+    const out = await tools.placeSupplierOrder.execute!({}, ctx(quotedTurn()));
+    expect(supplier.ordered).toEqual([QUOTE_ID]);
+    expect(out).toMatchObject({ status: "ordered", orderId: "ST-1A2B3C4D", notSaved: true });
+    expect(receiptLines([{ tool: "placeSupplierOrder", output: out as Record<string, unknown> }])[0]).toContain("not saved in Munshi");
+  });
+
   it("needs a live quote first", async () => {
     expect(await tools.placeSupplierOrder.execute!({}, ctx([{ role: "user", content: "order karo" }]))).toMatchObject({ status: "no_quote" });
     const stale = token({ lines: LINES, total: "₹1,300", exp: Date.now() / 1000 - 60 });

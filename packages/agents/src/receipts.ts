@@ -47,7 +47,7 @@ export function receiptLines(actions: Action[]): string[] {
       case "setReorderLevel":
         return [output.alertAt ? `🧾 Alert: ${s(output.product)} at ${s(output.alertAt)} (now ${s(output.stock)})` : `🧾 Alert removed: ${s(output.product)}`];
       case "placeSupplierOrder":
-        return [`🚚 Order ${s(output.orderId)} to ${s(output.supplier)}: ${s(output.total)} · delivery ${s(output.deliverySlot)}`];
+        return [`🚚 Order ${s(output.orderId)} to ${s(output.supplier)}: ${s(output.total)} · delivery ${s(output.deliverySlot)}${output.notSaved ? " · not saved in Munshi" : ""}`];
       case "addCustomer": {
         const customer = output.customer as { name?: string } | undefined;
         return [`🧾 New customer: ${s(customer?.name)}`];
