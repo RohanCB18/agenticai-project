@@ -237,7 +237,19 @@ describe("specialist desks", () => {
     await agent.generate({ messages: [{ role: "user", content: "Chawal kitna hai?" }] });
 
     expect(routes).toEqual(["stock"]);
-    expect(seen[0]?.tools).toEqual(["askSupplierQuote", "forget", "getStock", "handOff", "placeSupplierOrder", "recall", "recordSale", "remember", "setReorderLevel", "updateStock"]);
+    expect(seen[0]?.tools).toEqual([
+      "askSupplierQuote",
+      "forget",
+      "getStock",
+      "handOff",
+      "lookupGst",
+      "placeSupplierOrder",
+      "recall",
+      "recordSale",
+      "remember",
+      "setReorderLevel",
+      "updateStock",
+    ]);
     expect(seen[0]?.instructions).toContain("stock desk");
     expect(seen[0]?.instructions).not.toContain("sendPaymentLink");
   });

@@ -21,6 +21,8 @@ const MEMORY_TOOLS = ["remember", "recall", "forget"] as const;
 const ALL_TOOLS: KhataToolName[] = [
   "findCustomer",
   "addCustomer",
+  "updateCustomer",
+  "customerHistory",
   "recordCredit",
   "recordPayment",
   "recordSale",
@@ -34,6 +36,7 @@ const ALL_TOOLS: KhataToolName[] = [
   "paymentHabits",
   "askSupplierQuote",
   "placeSupplierOrder",
+  "lookupGst",
   ...MEMORY_TOOLS,
 ];
 
@@ -42,36 +45,65 @@ type Specialist = { purpose: string; tools: KhataToolName[]; rules: string[] };
 const RULES = {
   credit: `"X ne 450 ka saaman liya", "X took 450 on credit", "X ge 450 udhaar" means recordCredit.`,
   payment: `"X ne 200 diye", "X paid 200" means recordPayment.`,
-  link: "To collect dues over UPI, use sendPaymentLink. The owner will be asked to approve it. If they deny it, acknowledge and do not retry. If the tool returns a link, it is already approved, so never ask for approval again. If customerNotified is false, the customer has NOT been told: say the link is ready for the owner to forward, never that it was sent.",
+  link: "To collect dues over UPI, use sendPaymentLink. If it reports missing_phone, ask for the customer's number, save it with updateCustomer, then send the link. The owner will be asked to approve it. If they deny it, acknowledge and do not retry. If the tool returns a link, it is already approved, so never ask for approval again. If customerNotified is false, the customer has NOT been told: say the link is ready for the owner to forward, never that it was sent.",
   qr: `Any request for a QR ("QR dikhao", "X ka QR", "scan karega"), or a customer who is in the shop ("yahan khada hai"), means call showPaymentQr, without asking first or looking up the balance. Never offer a link when the owner asked for a QR. Only after it returns qr_ready, tell the owner the QR is on screen. If it reports qr_unavailable, offer a payment link.`,
   check: `"X ka payment aaya?" or "did X pay?" means checkPayment.`,
   habits: `For payment patterns ("X kab deti hai?"), use paymentHabits rather than memory or guesses.`,
   stock: `Stock that arrived ("10 packet Maggi aaya") is updateStock with a positive change; stock sold or used up is a negative change. "Kya khatam ho raha hai?" means getStock. "Rice 10 kg pe alert karna" (tell me when rice is down to 10 kg) means setReorderLevel. Owners name items in their own language (akki, chawal, sakkare): check getStock before deciding a word is a customer's name.`,
   restock: `To restock, askSupplierQuote gets a quote from the wholesaler's agent (omit items to quote everything running low). Tell the owner the items, the total and the delivery slot, and what the wholesaler can't supply. Only after the owner says yes, call placeSupplierOrder; the owner then approves it with a button. Never state a price the quote didn't give.`,
+  history: `For what a customer took or paid over a period ("Ramesh ne pichhle mahine kya liya?", "Fatima ne is hafte kitna diya?"), use customerHistory with the number of days (a week is 7, a month is 30). Answer from its entries and notes; never guess what they bought.`,
+  customer: `To add or change an existing customer's mobile number ("Fatima ka number 98...") or fix their name, use updateCustomer. addCustomer is only for someone new.`,
+  gst: `For GST questions ("Maggi pe kitna GST?", "atta pe GST lagta hai?"), call lookupGst with a generic English item name (Maggi is instant noodles, atta is wheat flour) and answer only from what it returns: the total GST, then the notification and S. No. it comes from. Loose and packed goods often differ; if the owner didn't say which, give both. If nothing fits, say you aren't sure and suggest their CA. Never state a GST rate from memory.`,
   memory: `When the owner tells you a lasting fact or a preference ("Ramesh is Lakshmi's husband", "call me Akka", "Fatima pays on Saturdays"), save it with remember. Before answering about a customer's background, check recall and repeat what it says without adding to it: "the owner" in a fact means the person you are talking to, so say "your", and any other name is someone else.`,
 };
 
 export const SPECIALISTS: Record<Exclude<Desk, "general">, Specialist> = {
   khata: {
-    purpose: "the khata: udhaar given, cash payments received, sales, expenses, balances and customers",
-    tools: ["findCustomer", "addCustomer", "recordCredit", "recordPayment", "recordSale", "getBalances", ...MEMORY_TOOLS],
-    rules: [RULES.credit, RULES.payment, RULES.memory],
+    purpose: "the khata: udhaar given, cash payments received, sales, expenses, balances, a customer's history and customer details",
+    tools: ["findCustomer", "addCustomer", "updateCustomer", "customerHistory", "recordCredit", "recordPayment", "recordSale", "getBalances", ...MEMORY_TOOLS],
+    rules: [RULES.credit, RULES.payment, RULES.history, RULES.customer, RULES.memory],
   },
   collections: {
     purpose: "collecting dues: payment links, QR codes, checking whether a customer paid, cash handed over, and how customers usually pay",
     // Cash payments and sales live at the khata desk too. The router mixes up "money came in" and
     // "collect money" (in testing it sent "Fatima 100 rupayi kottru" here), so both desks can record it.
-    tools: ["findCustomer", "getBalances", "recordPayment", "recordSale", "sendPaymentLink", "showPaymentQr", "checkPayment", "paymentHabits", ...MEMORY_TOOLS],
-    rules: [RULES.payment, RULES.link, RULES.qr, RULES.check, RULES.habits, RULES.memory],
+    tools: [
+      "findCustomer",
+      "getBalances",
+      "recordPayment",
+      "recordSale",
+      "sendPaymentLink",
+      "showPaymentQr",
+      "checkPayment",
+      "paymentHabits",
+      "customerHistory",
+      "updateCustomer",
+      ...MEMORY_TOOLS,
+    ],
+    rules: [RULES.payment, RULES.link, RULES.qr, RULES.check, RULES.habits, RULES.history, RULES.customer, RULES.memory],
   },
   stock: {
-    purpose: "stock: what is left, what arrived, what sold, what is running low, and reordering from the wholesaler",
-    tools: ["getStock", "updateStock", "setReorderLevel", "recordSale", "askSupplierQuote", "placeSupplierOrder", ...MEMORY_TOOLS],
-    rules: [RULES.stock, RULES.restock, RULES.memory],
+    purpose: "stock: what is left, what arrived, what sold, what is running low, reordering from the wholesaler, and the GST on goods",
+    // GST questions name a product ("Maggi pe kitna GST?"), so the router often sends them here.
+    tools: ["getStock", "updateStock", "setReorderLevel", "recordSale", "askSupplierQuote", "placeSupplierOrder", "lookupGst", ...MEMORY_TOOLS],
+    rules: [RULES.stock, RULES.restock, RULES.gst, RULES.memory],
   },
 };
 
-const GENERAL_RULES = [RULES.credit, RULES.payment, RULES.link, RULES.qr, RULES.check, RULES.habits, RULES.stock, RULES.restock, RULES.memory];
+const GENERAL_RULES = [
+  RULES.credit,
+  RULES.payment,
+  RULES.link,
+  RULES.qr,
+  RULES.check,
+  RULES.habits,
+  RULES.history,
+  RULES.customer,
+  RULES.stock,
+  RULES.restock,
+  RULES.gst,
+  RULES.memory,
+];
 
 const CORE_RULES = [
   "Use tools for every fact about money or stock. Never guess balances or invent customers.",
@@ -164,12 +196,12 @@ export type Route = { desk: Desk; by: "model" | "qr" | "approval" | "fallback"; 
 
 const ROUTER_PROMPT = `You route a shop owner's message to one desk of their bookkeeping assistant. The message may be in any Indian language, in its own script or in English letters. Reply with one word only: khata, collections, stock or general.
 
-khata: udhaar given, money a customer handed over in cash, sales, expenses, who owes how much, adding a customer.
-  "Suresh ne 300 ka samaan liya", "सुरेश ने 500 रुपये दिए", "Lakshmi 200 kottlu", "Kal 900 ka dhanda hua", "Dukaan ka kiraya 5000 diya", "Lakshmi ku evvalavu baaki?"
+khata: udhaar given, money a customer handed over in cash, sales, expenses, who owes how much, what a customer took or paid over time, adding a customer or their phone number.
+  "Suresh ne 300 ka samaan liya", "सुरेश ने 500 रुपये दिए", "Lakshmi 200 kottlu", "Kal 900 ka dhanda hua", "Dukaan ka kiraya 5000 diya", "Lakshmi ku evvalavu baaki?", "Suresh ne is mahine kya kya liya?", "Lakshmi ka number 9876543210 hai"
 collections: getting paid over UPI: sending a payment link, showing a QR code, checking whether an online payment arrived, when a customer usually pays.
   "Suresh ko link bhej do", "Lakshmi ka QR banao", "Suresh ne online bheja kya?", "Lakshmi aam taur par kab paisa deti hai?"
-stock: how much of an item is left, stock that arrived or sold, what is running low, ordering more from the wholesaler.
-  "Atta kitna hai?", "Sakkare eshtu ide?", "20 packet biscuit aaye", "Tel 2 litre bika", "Wholesaler se dal ka rate pucho"
+stock: how much of an item is left, stock that arrived or sold, what is running low, ordering more from the wholesaler, GST on goods.
+  "Atta kitna hai?", "Sakkare eshtu ide?", "20 packet biscuit aaye", "Tel 2 litre bika", "Wholesaler se dal ka rate pucho", "Maggi pe kitna GST lagta hai?"
 general: greetings, thanks, remembering or recalling facts, anything else, or a message that needs more than one desk.
   "Hello ji", "Yaad rakhna, Suresh Monday ko aata hai", "Lakshmi kaun hai?"
 

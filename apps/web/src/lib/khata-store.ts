@@ -69,6 +69,14 @@ export function createSupabaseKhataStore(db: SupabaseClient, merchantId: string,
       ) as CustomerRow;
     },
 
+    async updateCustomer(customerId, { name, aliases, phone }) {
+      const changes = Object.fromEntries(Object.entries({ name, aliases, phone }).filter(([, value]) => value !== undefined));
+      return must(
+        await db.from("customers").update(changes).eq("id", customerId).eq("merchant_id", merchantId).select("id, name, aliases, phone, language").single(),
+        "Update customer",
+      ) as CustomerRow;
+    },
+
     async addLedgerEntry({ kind, amountPaise, customerId, note }) {
       const row = must(
         await db

@@ -47,6 +47,9 @@ describe("Munshi MCP server", () => {
     expect(byName.getBalances?.annotations?.readOnlyHint).toBe(true);
     expect(byName.forget?.annotations?.destructiveHint).toBe(true);
     expect(byName.sendPaymentLink?.annotations?.openWorldHint).toBe(true);
+    expect(byName.lookupGst?.annotations?.readOnlyHint).toBe(true);
+    expect(byName.customerHistory?.annotations?.readOnlyHint).toBe(true);
+    expect(byName.updateCustomer?.annotations?.destructiveHint).toBe(true);
     expect(byName.recordPayment?.inputSchema.properties).toHaveProperty("customerName");
     expect(c.getInstructions()).toContain("Sri Ganesh Stores");
   });

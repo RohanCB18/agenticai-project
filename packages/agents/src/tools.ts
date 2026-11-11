@@ -2,6 +2,7 @@ import { formatINR, Language, rupeesToPaise } from "@munshi/db";
 import { type ModelMessage, tool } from "ai";
 import { z } from "zod";
 import { paymentHabits } from "./habits";
+import type { GstPassage, KnowledgeBase } from "./knowledge";
 import { ownerWasAskedAboutRepeat } from "./threads";
 import { rankByName } from "./match";
 import { rankProducts, tooClose } from "./staples";
@@ -24,6 +25,11 @@ type Due = { ok: true; amountPaise: number } | { ok: false; result: Record<strin
 function dues(outstandingPaise: number) {
   return outstandingPaise < 0 ? { nowOwes: formatINR(0), advance: formatINR(-outstandingPaise) } : { nowOwes: formatINR(outstandingPaise) };
 }
+
+const Phone = z
+  .string()
+  .regex(/^\+?[0-9 ]{10,15}$/)
+  .describe("Indian mobile number, as the owner gave it");
 
 const ConfirmedNew = z
   .boolean()
@@ -89,7 +95,30 @@ export type KhataToolOptions = {
   repeatConfirmed?: (messages: ModelMessage[], customer: string, amount: string) => boolean;
   /** The wholesaler to restock from (an A2A agent). Without one, the supplier tools say so. */
   supplier?: SupplierAgent;
+  /** Reference knowledge (official GST rates). Without it, lookupGst says so. */
+  knowledge?: KnowledgeBase;
 };
+
+const LEDGER_LABELS: Record<string, string> = { credit_given: "udhaar", payment_received: "payment" };
+
+/** "12 Oct 2026" in India time: the day the owner would say, not the UTC one. */
+const indianDate = (iso: string) => new Date(iso).toLocaleDateString("en-IN", { timeZone: "Asia/Kolkata", day: "numeric", month: "short", year: "numeric" });
+
+// "Schedule I, S. No. 48 of Notification No. 9/2025-Central Tax (Rate)", or the List form.
+const CITATION =
+  /(?:Schedule [IVX]+, )?S\. No\. [0-9A-Z]+ of Notification No\. \d+\/\d{4}-Central Tax \(Rate\)|List \d+ \[See S\. No\. \d+ of Schedule [IVX]+\] of Notification No\. \d+\/\d{4}-Central Tax \(Rate\)/;
+
+/** One GST entry for the model: the total rate, the official text it comes from, and where to read it. */
+function gstEntry(p: GstPassage) {
+  return {
+    item: p.description,
+    hsn: p.hsn,
+    ...(p.gst === null ? {} : { gst: p.gst === 0 ? "0% (exempt)" : `${p.gst}%` }),
+    citation: p.content.match(CITATION)?.[0] ?? p.sources[0]?.title ?? null,
+    officialText: p.content,
+    sources: p.sources.map((s) => ({ notification: s.title, inForceFrom: s.effectiveFrom, url: s.url })),
+  };
+}
 
 const NO_SUPPLIER = { status: "no_supplier", hint: "Tell the owner no wholesaler is connected to Munshi yet." };
 
@@ -101,7 +130,7 @@ function supplierDown(name: string, error: unknown) {
 
 export function createKhataTools(store: KhataStore, shopName = "your shop", options: KhataToolOptions = {}) {
   const repeatConfirmed = options.repeatConfirmed ?? ownerWasAskedAboutRepeat;
-  const { supplier } = options;
+  const { supplier, knowledge } = options;
   return {
     findCustomer: tool({
       description: "Look up customers by a spoken or typed name, including nicknames and names in Indian scripts.",
@@ -116,13 +145,88 @@ export function createKhataTools(store: KhataStore, shopName = "your shop", opti
       description: "Add a new customer to the khata. Only call this after the owner confirms the person is new.",
       inputSchema: z.object({
         name: z.string().min(1).max(120),
-        phone: z.string().regex(/^\+?[0-9 ]{10,15}$/).optional().describe("Indian mobile number, if the owner gave one"),
+        phone: Phone.optional(),
         language: Language.optional(),
       }),
       execute: async (input) => {
         const customer = await store.addCustomer(input);
         await store.audit("customer_added", { customerId: customer.id, name: customer.name });
         return { status: "added", customer: { id: customer.id, name: customer.name } };
+      },
+    }),
+
+    updateCustomer: tool({
+      description:
+        "Change an existing customer's details: add or correct their mobile number, or fix the spelling of their name. Use when the owner gives a number for someone already in the khata, e.g. before sending a payment link.",
+      inputSchema: z.object({
+        customerName: z.string().describe("The customer as the khata knows them now"),
+        phone: Phone.optional(),
+        newName: z.string().min(1).max(120).optional().describe("Only if the owner wants the name itself changed"),
+      }),
+      execute: async ({ customerName, phone, newName }) => {
+        if (!phone && !newName) return { status: "nothing_to_change", hint: "Ask the owner what to change: the mobile number or the name." };
+        const r = await resolveCustomer(store, customerName);
+        if (!r.ok) return r.result;
+        const before = { ...r.customer };
+        const name = newName?.trim();
+        const renamed = Boolean(name) && name !== before.name;
+        // The old name stays an alias, so "Ramesh" still finds "Ramesh Kumar" after a rename.
+        const aliases = renamed && !before.aliases.includes(before.name) ? [...before.aliases, before.name] : undefined;
+        const customer = await store.updateCustomer(before.id, {
+          ...(phone ? { phone: phone.replace(/\s+/g, "") } : {}),
+          ...(renamed ? { name, aliases } : {}),
+        });
+        await store.audit("customer_updated", {
+          customerId: customer.id,
+          ...(phone ? { phoneChanged: before.phone !== customer.phone } : {}),
+          ...(renamed ? { from: before.name, to: customer.name } : {}),
+        });
+        return {
+          status: "updated",
+          customer: customer.name,
+          ...(renamed ? { previousName: before.name } : {}),
+          phone: customer.phone,
+          ...(phone && before.phone && before.phone !== customer.phone ? { previousPhone: before.phone } : {}),
+        };
+      },
+    }),
+
+    customerHistory: tool({
+      description:
+        "A customer's khata over the last few days: each udhaar with what they took (when it was noted) and each payment, with totals. Use for 'Ramesh ne pichhle mahine kya liya?', 'Fatima ne is hafte kitna diya?' or 'when did Suresh last pay?'.",
+      inputSchema: z.object({
+        customerName: z.string(),
+        days: z.number().int().min(1).max(366).default(30).describe("How far back to look: 7 for a week, 30 for a month, 365 for a year"),
+      }),
+      execute: async ({ customerName, days }) => {
+        const r = await resolveCustomer(store, customerName);
+        if (!r.ok) return r.result;
+        const LIMIT = 200;
+        const SHOWN = 25;
+        const recent = await store.recentEntries(LIMIT, r.customer.id);
+        const since = Date.now() - days * 86_400_000;
+        const entries = recent.filter((e) => Date.parse(e.createdAt) >= since);
+        const total = (kind: string) => entries.filter((e) => e.kind === kind).reduce((sum, e) => sum + e.amountPaise, 0);
+        const [balance] = await store.balances(r.customer.id);
+        return {
+          status: "history",
+          customer: r.customer.name,
+          days,
+          tookOnCredit: formatINR(total("credit_given")),
+          paid: formatINR(total("payment_received")),
+          ...dues(balance?.outstandingPaise ?? 0),
+          // Newest first, as the owner would read their khata back.
+          entries: entries.slice(0, SHOWN).map((e) => ({
+            date: indianDate(e.createdAt),
+            type: LEDGER_LABELS[e.kind] ?? e.kind,
+            amount: formatINR(e.amountPaise),
+            ...(e.note ? { note: e.note } : {}),
+          })),
+          ...(entries.length > SHOWN ? { olderEntriesNotShown: entries.length - SHOWN } : {}),
+          // Every entry read was inside the window, so there may be more before them.
+          ...(entries.length === LIMIT ? { mayHaveMore: true } : {}),
+          ...(entries.length === 0 ? { hint: `Nothing in the khata for ${r.customer.name} in the last ${days} days.` } : {}),
+        };
       },
     }),
 
@@ -265,7 +369,13 @@ export function createKhataTools(store: KhataStore, shopName = "your shop", opti
       execute: async ({ customerName, amount }) => {
         const r = await resolveCustomer(store, customerName);
         if (!r.ok) return r.result;
-        if (!r.customer.phone) return { status: "missing_phone", customer: r.customer.name, hint: "Ask the owner for the customer's mobile number." };
+        if (!r.customer.phone) {
+          return {
+            status: "missing_phone",
+            customer: r.customer.name,
+            hint: "Ask the owner for the customer's mobile number, save it with updateCustomer, then send the link.",
+          };
+        }
 
         const due = await amountDue(store, r.customer, amount);
         if (!due.ok) return due.result;
@@ -448,6 +558,29 @@ export function createKhataTools(store: KhataStore, shopName = "your shop", opti
           return { ...placed, notSaved: true, hint: `The order is placed with ${order.supplier}, but Munshi couldn't keep a copy. Give the owner the order id.` };
         }
         return { ...placed, hint: "When the goods arrive, the owner can send a photo of the bill to add them to stock." };
+      },
+    }),
+
+    lookupGst: tool({
+      description:
+        "Look up the GST rate on goods in the official GST rate notifications (rates in force from 22 September 2025), with the notification and serial number to cite. Search with a generic English description, not a brand: Maggi is 'instant noodles', atta is 'wheat flour', Surf is 'washing powder detergent', Parle-G is 'biscuits', a cold drink like Coke is 'aerated drink with added sugar'. Add 'packed' or 'loose' if the owner said so.",
+      inputSchema: z.object({ item: z.string().min(2).max(200).describe("Generic English description of the goods") }),
+      execute: async ({ item }) => {
+        if (!knowledge) return { status: "no_knowledge", hint: "Tell the owner GST lookups aren't set up in Munshi yet." };
+        let passages: GstPassage[];
+        try {
+          passages = await knowledge.searchGst(item, 5);
+        } catch (error) {
+          console.error("[munshi] GST lookup failed:", error instanceof Error ? error.message : error);
+          return { status: "knowledge_unavailable", hint: "The GST lookup didn't answer. Tell the owner to try again in a minute." };
+        }
+        if (passages.length === 0) return { status: "not_found", item, hint: "No official entry matched. Say so, and suggest the owner checks with their CA." };
+        return {
+          status: "found",
+          item,
+          entries: passages.map(gstEntry),
+          hint: "Answer only from these entries: the total GST first, then the notification and S. No. it comes from. If loose and packed goods differ, give both. If no entry clearly covers the item, say you aren't sure and suggest checking with their CA. Never give a rate that isn't here.",
+        };
       },
     }),
 

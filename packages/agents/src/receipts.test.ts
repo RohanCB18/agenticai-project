@@ -28,7 +28,9 @@ describe("receiptLines", () => {
         result("recordSale", { status: "recorded", kind: "expense", amount: "₹120" }),
         result("updateStock", { status: "updated", product: "Rice", stock: "50 kg" }),
         result("addCustomer", { status: "added", customer: { id: "c1", name: "Anand" } }),
+        result("updateCustomer", { status: "updated", customer: "Fatima Begum", previousName: "Fatima", phone: "9800000002" }),
         result("sendPaymentLink", { status: "sent", url: "https://pay" }),
+        result("lookupGst", { status: "found", entries: [] }),
       ]),
     );
     expect(lines).toEqual([
@@ -37,6 +39,7 @@ describe("receiptLines", () => {
       "🧾 Expense: ₹120",
       "🧾 Stock: Rice now 50 kg",
       "🧾 New customer: Anand",
+      "🧾 Customer: Fatima Begum (was Fatima) · phone 9800000002",
     ]);
   });
 });

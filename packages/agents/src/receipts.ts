@@ -42,6 +42,8 @@ export function receiptLines(actions: Action[]): string[] {
         return [`🧾 Stock: ${s(output.product)} now ${s(output.stock)}`];
       case "remember":
         return [`🧾 Remembered (${s(output.about)}): ${s(output.fact)}`];
+      case "updateCustomer":
+        return [`🧾 Customer: ${s(output.customer)}${output.previousName ? ` (was ${s(output.previousName)})` : ""}${output.phone ? ` · phone ${s(output.phone)}` : ""}`];
       case "forget":
         return ["🧾 Forgotten"];
       case "setReorderLevel":

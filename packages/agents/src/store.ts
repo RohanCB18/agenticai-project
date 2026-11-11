@@ -26,6 +26,8 @@ export type Memory = { id: string; fact: string; customerId: string | null; crea
 export interface KhataStore {
   listCustomers(): Promise<Customer[]>;
   addCustomer(input: { name: string; phone?: string; language?: Language; aliases?: string[] }): Promise<Customer>;
+  /** Changes a customer's name, aliases or phone; fields left out stay as they are. */
+  updateCustomer(customerId: string, changes: { name?: string; aliases?: string[]; phone?: string }): Promise<Customer>;
   addLedgerEntry(input: { kind: LedgerKind; amountPaise: Paise; customerId?: string; note?: string; traceId?: string }): Promise<LedgerEntry>;
   balances(customerId?: string): Promise<Balance[]>;
   recentEntries(limit: number, customerId?: string): Promise<LedgerEntry[]>;

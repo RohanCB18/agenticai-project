@@ -24,6 +24,22 @@ export class MemoryStore implements KhataStore {
     return c;
   }
 
+  async updateCustomer(customerId: string, changes: Parameters<KhataStore["updateCustomer"]>[1]) {
+    const customer = this.customers.find((c) => c.id === customerId);
+    if (!customer) throw new Error(`No customer ${customerId}`);
+    Object.assign(customer, Object.fromEntries(Object.entries(changes).filter(([, value]) => value !== undefined)));
+    return customer;
+  }
+
+  /** Back-dates an entry, for tests about history over time. */
+  async addPastEntry(input: Parameters<KhataStore["addLedgerEntry"]>[0], daysAgo: number) {
+    const entry = await this.addLedgerEntry(input);
+    entry.createdAt = new Date(Date.now() - daysAgo * 86_400_000).toISOString();
+    // Keep the ledger in time order, as the database returns it.
+    this.entries.sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+    return entry;
+  }
+
   async addLedgerEntry(input: Parameters<KhataStore["addLedgerEntry"]>[0]) {
     const e: LedgerEntry = {
       id: this.id("led"),

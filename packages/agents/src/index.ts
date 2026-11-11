@@ -5,6 +5,7 @@ export * from "./staples";
 export * from "./mentions";
 export * from "./models";
 export type * from "./store";
+export type * from "./knowledge";
 export * from "./tools";
 export * from "./voice";
 export * from "./threads";

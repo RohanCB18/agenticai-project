@@ -2,7 +2,7 @@
 
 A voice-first AI bookkeeper for Indian shops. A shop owner speaks in Kannada, Hindi, Tamil or Bengali; Munshi keeps the khata, collects udhaar over UPI, manages stock, pays suppliers and handles GST. Every rupee it moves waits for the owner's "haan".
 
-> Status: **Live at https://agenticai-project.vercel.app** (Cashfree sandbox). Phase 3 under way: bill photos, shop memory, specialist desks, udhaar reminders (a durable Vercel Workflow), Langfuse tracing, an MCP server (connect the khata to Claude or any MCP host) and restocking from a wholesaler's agent over A2A are done. A khata agent on Sarvam-105B (Claude as fallback) records udhaar, payments, sales and stock, and sends Cashfree UPI payment links after the owner approves. Paid links update the khata through a signed webhook. The owner can tap the mic and speak in any Indian language: Saaras v4 transcribes it (biased toward the shop's customer and product names), and Bulbul speaks the reply back in the same language. The same agent works over **Telegram**: link the shop in one tap, then send voice notes or texts and get spoken replies, with Haan / Nahi buttons for payment links. WhatsApp shares the same channel core and switches on with Meta keys. For a customer at the counter, Munshi shows an exact-amount UPI QR tied to their khata, so the payment lands on the right account by itself.
+> Status: **Live at https://agenticai-project.vercel.app** (Cashfree sandbox). Phase 3 under way: bill photos, shop memory, specialist desks, udhaar reminders (a durable Vercel Workflow), Langfuse tracing, an MCP server (connect the khata to Claude or any MCP host), restocking from a wholesaler's agent over A2A and GST answers cited from the official notifications (hybrid RAG) are done. A khata agent on Sarvam-105B (Claude as fallback) records udhaar, payments, sales and stock, and sends Cashfree UPI payment links after the owner approves. Paid links update the khata through a signed webhook. The owner can tap the mic and speak in any Indian language: Saaras v4 transcribes it (biased toward the shop's customer and product names), and Bulbul speaks the reply back in the same language. The same agent works over **Telegram**: link the shop in one tap, then send voice notes or texts and get spoken replies, with Haan / Nahi buttons for payment links. WhatsApp shares the same channel core and switches on with Meta keys. For a customer at the counter, Munshi shows an exact-amount UPI QR tied to their khata, so the payment lands on the right account by itself.
 
 ## How the agent works
 
@@ -33,8 +33,9 @@ apps/web               Next.js 16 app: auth, khata dashboard, chat with tool and
                        reminders workflow, MCP server (/api/mcp) with OAuth consent
 packages/agents        Khata agent, specialist desks and router, tools, memory, receipts, evals, Sarvam→Claude fallback
 packages/db            Shared money helpers (paise), zod schemas, generated DB types
-supabase/              Migrations, seed data, pgTAP RLS tests
+supabase/              Migrations, seed data, pgTAP RLS tests, the `embed` Edge Function (gte-small)
 services/distributor   Sharma Traders' wholesaler agent: Python, LangGraph, served over A2A 1.0 (a2a-sdk)
+knowledge/gst          Official GST rate notifications: sources, the parser that turns them into cited chunks, everyday names
 .github/workflows      CI: web, Python and database jobs
 ```
 
@@ -147,6 +148,38 @@ Supabase setup, once: Authentication → OAuth Server → enable it, set the aut
 - **Tested across the wire.** `services/distributor/tests` drive the agent with the official Python A2A client; `apps/web/src/lib/supplier.test.ts` runs Munshi's TypeScript client against the running Python agent (`uv run munshi-distributor`, then `A2A_INTEROP_URL=http://127.0.0.1:8102`).
 
 The supplier tools stay off until `DISTRIBUTOR_URL` points at the wholesaler's agent. In production the wholesaler needs `DISTRIBUTOR_QUOTE_SECRET`, so every instance signs and checks quotes with the same key.
+
+## GST answers with sources (RAG)
+
+"Maggi pe kitna GST hai?" gets "5% (CGST 2.5% + SGST 2.5%), Schedule I, S. No. 119 of Notification 9/2025-Central Tax (Rate)", answered from the official text, never from the model's memory. The rates changed on 22 September 2025, so a model's training data is likely to be wrong.
+
+- **Corpus.** `knowledge/gst/sources.json` lists the Gazette notifications: 9/2025 (rates, Schedules I–IV), 10/2025 (exemptions), 19/2025 (pan masala and tobacco moved to 40%, biris to 18%) and 01/2026 (HSN codes for some drinks). `build_chunks.py` parses the PDFs into one chunk per entry: description, HSN, the **total** GST (the notifications print only the CGST half), schedule and serial number. Amendments are applied, so an entry carries its current text and cites both notifications. A gap check fails the build if any serial number is missing. It also repairs the PDF text layer ("pre - packaged", "mixtur es"): a split word is joined only when the whole word occurs elsewhere in the notifications. Output: 1,372 entries in `chunks.jsonl`.
+- **What is searched is not what is quoted.** Each entry has a search text: its goods description without the rate-and-notification sentence every entry repeats (which blurred the embeddings), "pre-packaged and labelled" said as "(packed)" or "(loose, not packed)", and the everyday names of the goods. The names come from sarvam-105b (`name_goods.mjs`, document expansion): "fruits of the genus Capsicum" gets "chilli powder, kali mirch", rice gets "chawal". The model names all 1,368 entries the same way, in English and then in Hindi, into `common_names.json`. The agent still quotes only the official text.
+- **Embeddings in Supabase.** The `embed` Edge Function runs gte-small (384 dimensions) inside Supabase, so no embedding API is involved. `scripts/ingest-knowledge.mjs` embeds new or changed search texts only and upserts them into `knowledge_chunks` (pgvector, HNSW index).
+- **Hybrid retrieval.** `match_knowledge` fuses three rankings with reciprocal rank fusion: meaning (vector), keywords (full-text) and HSN codes ("HSN 2202 10" read off a wholesaler's bill, matched code first, then its heading).
+- **Measured on questions it wasn't tuned on.** `scripts/eval-knowledge.mjs` has 102 shop questions, each labelled with the entries that answer it, read from the notification text. Every change and the weights were judged on 63 **dev** questions; the other 39 were **held out** and run once, at the end. The original build is loaded beside the new one (`--corpus`) for a fair before/after. On the held-out questions:
+
+  | Held-out (39 questions) | Answer first | In top 5 | MRR |
+  |---|---|---|---|
+  | Original build | 19 | 29 | 0.58 |
+  | **Current build** | **28** | **38** | **0.82** |
+
+  What each change did, on the dev questions:
+
+  | Dev (63 questions) | Answer first | In top 5 | MRR |
+  |---|---|---|---|
+  | Original build | 36 | 52 | 0.69 |
+  | + clean text, packing in plain words, a parser fix (10/2025's definitions had been read into its last entry, which then matched every "packed" question) | 42 | 50 | 0.74 |
+  | + everyday names (English) | 45 | 59 | 0.81 |
+  | + Hindi names: "chawal", "cheeni", "doodh" went from not found to found | 48 | 62 | 0.85 |
+  | + weights retuned (keywords 0.25) | 49 | 62 | 0.86 |
+
+  Each part earns its place: on the held-out questions, vector search alone puts the answer in the top 5 for 34, keywords alone for 29, and only the HSN ranking finds codes read off a bill. A first, smaller set of 27 questions had scored 0.85 MRR before any of this; growing it to 102 and holding some out showed that number was flattering.
+- **Grounded answers.** `lookupGst` returns each entry's rate, official text and citation, and tells the agent to answer only from them, to give both rates when loose and packed goods differ, and to suggest a CA when nothing fits. The web chat shows each citation as a link to the Gazette PDF.
+
+Shop history is retrieval too: `customerHistory` answers "Ramesh ne pichhle mahine kya liya?" from the ledger (each udhaar with what was noted, each payment, totals), and `updateCustomer` saves a phone number so a payment link can be sent.
+
+Setting it up: `npx supabase db push`, `npx supabase secrets set EMBED_KEY=<key>`, `npx supabase functions deploy embed`, set `SUPABASE_EMBED_KEY` to the same key in the app, then run `node --env-file=apps/web/.env.local apps/web/scripts/ingest-knowledge.mjs` from the repo root (`KNOWLEDGE_SUPABASE_URL` and `KNOWLEDGE_SUPABASE_SECRET_KEY` point it at another project). To rebuild the chunks: `uv run --with pypdf --with fonttools python knowledge/gst/build_chunks.py`; to rename the goods: `node --env-file=apps/web/.env.local knowledge/gst/name_goods.mjs`, then again with `--hindi`.
 
 ## Observability
 

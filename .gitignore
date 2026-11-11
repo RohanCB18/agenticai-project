@@ -26,3 +26,6 @@ supabase/.branches/
 supabase/.temp/
 
 .DS_Store
+
+# GST knowledge: downloaded source PDFs
+knowledge/gst/.cache/

@@ -1,4 +1,4 @@
-import { createKhataTools, type KhataStore } from "@munshi/agents";
+import { createKhataTools, type KhataStore, type KnowledgeBase } from "@munshi/agents";
 import { McpServer, type StandardSchemaWithJSON } from "@modelcontextprotocol/server";
 import { registerKhataCard } from "./khata-card";
 
@@ -16,9 +16,13 @@ const EXPOSED: Record<string, { title: string; annotations: Annotations }> = {
   getStock: { title: "Check stock", annotations: { readOnlyHint: true } },
   paymentHabits: { title: "When a customer usually pays", annotations: { readOnlyHint: true } },
   recall: { title: "What Munshi remembers", annotations: { readOnlyHint: true } },
+  customerHistory: { title: "A customer's khata history", annotations: { readOnlyHint: true } },
+  lookupGst: { title: "Look up GST on goods", annotations: { readOnlyHint: true } },
   // Asks Cashfree, and records a payment that arrived: safe to repeat, but it can write.
   checkPayment: { title: "Check online payments", annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true } },
   addCustomer: { title: "Add a customer", annotations: { readOnlyHint: false, destructiveHint: false } },
+  // Replaces the phone number or name on file.
+  updateCustomer: { title: "Change a customer's phone or name", annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true } },
   recordCredit: { title: "Record udhaar", annotations: { readOnlyHint: false, destructiveHint: false } },
   recordPayment: { title: "Record a payment", annotations: { readOnlyHint: false, destructiveHint: false } },
   recordSale: { title: "Record a sale or expense", annotations: { readOnlyHint: false, destructiveHint: false } },
@@ -41,13 +45,14 @@ function instructions(shopName: string) {
     "possible_repeat means the same entry was saved minutes ago: call again with confirmedNew: true only after the owner says it is a new one.",
     "sendPaymentLink sends the customer a real UPI payment link. Confirm the customer and amount with the owner first.",
     "Customer names may be in any Indian language or script; pass them as the owner said them.",
+    "For GST on goods, use lookupGst and answer only from the official entries it returns, citing the notification and S. No.",
   ].join("\n");
 }
 
 /** One MCP server for one shop, built per request from that shop's store. */
-export function createMunshiMcpServer({ store, shopName }: { store: KhataStore; shopName: string }) {
+export function createMunshiMcpServer({ store, shopName, knowledge }: { store: KhataStore; shopName: string; knowledge?: KnowledgeBase }) {
   // The host shows every write call to the owner before it runs, so confirmedNew is the owner's answer.
-  const tools = createKhataTools(store, shopName, { repeatConfirmed: () => true });
+  const tools = createKhataTools(store, shopName, { repeatConfirmed: () => true, knowledge });
   const server = new McpServer({ name: "munshi", title: `Munshi: ${shopName}`, version: "1.0.0" }, { instructions: instructions(shopName) });
 
   for (const [name, { title, annotations }] of Object.entries(EXPOSED)) {

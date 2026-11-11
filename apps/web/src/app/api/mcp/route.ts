@@ -1,5 +1,6 @@
 import { createMcpHandler } from "@modelcontextprotocol/server";
 import { createSupabaseKhataStore } from "@/lib/khata-store";
+import { configuredKnowledge } from "@/lib/knowledge";
 import { authenticate, unauthorized } from "@/lib/mcp/auth";
 import { createMunshiMcpServer } from "@/lib/mcp/server";
 
@@ -25,7 +26,7 @@ async function serve(request: Request) {
   if (!merchant) return Response.json({ error: "This account has no Munshi shop yet. Sign up at Munshi first." }, { status: 403 });
 
   const store = createSupabaseKhataStore(caller.db, merchant.id, { source: "mcp", actor: `mcp:${caller.clientId}` });
-  const handler = createMcpHandler(() => createMunshiMcpServer({ store, shopName: merchant.shop_name }), {
+  const handler = createMcpHandler(() => createMunshiMcpServer({ store, shopName: merchant.shop_name, knowledge: configuredKnowledge() }), {
     onerror: (error) => console.error("[munshi] mcp request failed:", error.message),
   });
   return handler.fetch(request, { authInfo: { token: caller.token, clientId: caller.clientId, scopes: [], expiresAt: caller.expiresAt } });

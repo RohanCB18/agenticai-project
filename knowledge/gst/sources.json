@@ -1,0 +1,49 @@
+{
+  "_note": "Official GST rate notifications for goods that Munshi's GST lookup cites. Rates in Central Tax (Rate) notifications are CGST; SGST is the same again, so the GST a customer pays is double (IGST equals the total). build_chunks.py downloads these, parses every entry and applies the amendments.",
+  "documents": [
+    {
+      "id": "ctr-09-2025",
+      "title": "Notification No. 9/2025-Central Tax (Rate)",
+      "gsr": "G.S.R. 641(E)",
+      "dated": "2025-09-17",
+      "effectiveFrom": "2025-09-22",
+      "kind": "rates",
+      "summary": "GST rates on goods: Schedules I to VII (CGST 2.5%, 9%, 20%, 1.5%, 0.125%, 0.75%, 14%). Supersedes 1/2017-Central Tax (Rate).",
+      "url": "https://taxo.online/wp-content/uploads/2025/09/09_2025-CTR.pdf",
+      "copyOf": "Gazette of India, Extraordinary, Part II, Section 3(i); digitally signed by the Government of India Press on 2025-09-17"
+    },
+    {
+      "id": "ctr-10-2025",
+      "title": "Notification No. 10/2025-Central Tax (Rate)",
+      "gsr": "G.S.R. 660(E)",
+      "dated": "2025-09-17",
+      "effectiveFrom": "2025-09-22",
+      "kind": "exemptions",
+      "summary": "Goods exempt from GST (nil rate). Supersedes 2/2017-Central Tax (Rate).",
+      "url": "https://taxo.online/wp-content/uploads/2025/09/NN-10-2025_CT_R.pdf",
+      "copyOf": "Gazette of India, Extraordinary, Part II, Section 3(i)"
+    },
+    {
+      "id": "ctr-19-2025",
+      "title": "Notification No. 19/2025-Central Tax (Rate)",
+      "gsr": "G.S.R. 946(E)",
+      "dated": "2025-12-31",
+      "effectiveFrom": "2026-02-01",
+      "kind": "amendment",
+      "summary": "Amends 9/2025: biris to Schedule II (18% GST); pan masala and tobacco products to Schedule III (40% GST); Schedule VII (28% GST) omitted.",
+      "url": "https://egazette.gov.in/WriteReadData/2025/268978.pdf",
+      "copyOf": "egazette.gov.in (official)"
+    },
+    {
+      "id": "ctr-01-2026",
+      "title": "Notification No. 01/2026-Central Tax (Rate)",
+      "gsr": "G.S.R. 328(E)",
+      "dated": "2026-04-30",
+      "effectiveFrom": "2026-05-01",
+      "kind": "amendment",
+      "summary": "Amends 9/2025: tariff items for beverages under heading 2202 realigned with the Finance Act, 2026 (Schedule I S. Nos. 150-151, Schedule III S. Nos. 2-3).",
+      "url": "https://taxo.online/wp-content/uploads/2026/05/CTR-E-updated.pdf",
+      "copyOf": "CBIC notification text"
+    }
+  ]
+}

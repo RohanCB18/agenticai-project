@@ -2,6 +2,7 @@ import type { LanguageModelV4 } from "@ai-sdk/provider";
 import type { Language } from "@munshi/db";
 import { isStepCount, type ModelMessage, ToolLoopAgent, type InferAgentUIMessage, wrapLanguageModel } from "ai";
 import { type Channel, type Desk, deskInstructions, deskTools, handedOffTo, handOffTool, justHandedOff, type Route, routeMessage } from "./desks";
+import type { KnowledgeBase } from "./knowledge";
 import type { KhataStore } from "./store";
 import type { SupplierAgent } from "./supplier";
 import { findMentions, type Mention, mentionsHint, mentionsNote } from "./mentions";
@@ -112,6 +113,8 @@ export type KhataAgentOptions = {
   onRoute?: (route: Route) => void;
   /** The wholesaler to restock from (an A2A agent). */
   supplier?: SupplierAgent;
+  /** Reference knowledge Munshi answers from with citations (official GST rates). */
+  knowledge?: KnowledgeBase;
 };
 
 const SHOP_FACTS_SHOWN = 12;
@@ -122,7 +125,7 @@ async function shopFactsNote(store: KhataStore) {
   return facts.length ? `What the owner asked you to remember about the shop:\n${facts.map((m) => `- ${m.fact}`).join("\n")}` : null;
 }
 
-export function createKhataAgent({ model, store, shopName, language, approvalSecret, channel, detectLanguage, extraNote, specialists = true, onRoute, supplier }: KhataAgentOptions) {
+export function createKhataAgent({ model, store, shopName, language, approvalSecret, channel, detectLanguage, extraNote, specialists = true, onRoute, supplier, knowledge }: KhataAgentOptions) {
   // One lookup per turn for each note; every step of the loop reuses it. Failures aren't fatal.
   let shopFacts: Promise<string | null> | undefined;
   let languageRule: Promise<string | null> | undefined;
@@ -159,7 +162,7 @@ export function createKhataAgent({ model, store, shopName, language, approvalSec
   return new ToolLoopAgent({
     model,
     instructions: deskInstructions("general", shopName, language, channel),
-    tools: { ...createKhataTools(store, shopName, { supplier }), handOff: handOffTool },
+    tools: { ...createKhataTools(store, shopName, { supplier, knowledge }), handOff: handOffTool },
     // Money only moves after the owner says yes; approvals are HMAC-signed so a
     // client cannot forge one.
     toolApproval: { sendPaymentLink: "user-approval", placeSupplierOrder: "user-approval" },

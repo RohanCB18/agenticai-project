@@ -24,6 +24,9 @@ const LABELS: Record<string, string> = {
   sendPaymentLink: "UPI payment link",
   askSupplierQuote: "Wholesaler quote",
   placeSupplierOrder: "Wholesaler order",
+  updateCustomer: "Customer updated",
+  customerHistory: "Khata history",
+  lookupGst: "GST (official rates)",
 };
 
 export function ToolPart({ part, onDecision }: { part: Part; onDecision: Decide }) {
@@ -212,6 +215,58 @@ function Output({ name, out }: { name: string; out: Record<string, unknown> }) {
         <p className="text-muted">Delivery {String(out.deliverySlot)}, pay on delivery</p>
         {out.belowMinimum ? <p className="text-danger">{String(out.belowMinimum)}</p> : null}
       </div>
+    );
+  }
+
+  if (name === "lookupGst" && out.status === "found") {
+    const entries = (out.entries ?? []) as { item: string | null; gst?: string; citation: string | null; sources: { url: string }[] }[];
+    return (
+      <ul className="flex flex-col gap-2">
+        {entries.slice(0, 3).map((entry, i) => (
+          <li key={`${entry.citation}-${i}`} className="flex flex-col gap-0.5">
+            <div className="flex justify-between gap-4">
+              <span className="line-clamp-2">{entry.item}</span>
+              {entry.gst ? <span className="shrink-0 font-mono font-medium tabular-nums">{entry.gst}</span> : null}
+            </div>
+            {entry.sources[0] ? (
+              <a href={entry.sources[0].url} target="_blank" rel="noreferrer" className="text-xs text-accent underline">
+                {entry.citation}
+              </a>
+            ) : null}
+          </li>
+        ))}
+      </ul>
+    );
+  }
+
+  if (name === "customerHistory" && out.status === "history") {
+    const entries = (out.entries ?? []) as { date: string; type: string; amount: string; note?: string }[];
+    return (
+      <div className="flex flex-col gap-1">
+        <p className="font-medium">
+          {String(out.customer)}, last {String(out.days)} days: took {String(out.tookOnCredit)}, paid {String(out.paid)}
+        </p>
+        {entries.map((entry, i) => (
+          <div key={`${entry.date}-${i}`} className="flex justify-between gap-4">
+            <span>
+              {entry.date} · {entry.type}
+              {entry.note ? <span className="text-muted"> ({entry.note})</span> : null}
+            </span>
+            <span className="font-mono tabular-nums">{entry.amount}</span>
+          </div>
+        ))}
+        <p className="mt-1 border-t border-line pt-1">Now owes {String(out.nowOwes)}</p>
+      </div>
+    );
+  }
+
+  if (name === "updateCustomer" && out.status === "updated") {
+    return (
+      <p>
+        {String(out.customer)}
+        {out.previousName ? ` (was ${String(out.previousName)})` : ""}
+        {out.phone ? ` · phone ${String(out.phone)}` : ""}
+      </p>
     );
   }
 

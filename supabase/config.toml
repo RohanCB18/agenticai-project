@@ -420,3 +420,8 @@ enabled = true
 # formatted with uppercase keywords, indent 2, max width 180, trailing commas,
 # and column/key alignment. Set to "null" to emit raw, unformatted SQL.
 # format_options = "{\"keywordCase\":\"upper\",\"indent\":2,\"maxWidth\":180,\"commaStyle\":\"trailing\"}"
+
+# Embeddings for knowledge search. Checks its own shared key (EMBED_KEY) instead of a user JWT,
+# because the app calls it from the server, including for Telegram messages that have no user session.
+[functions.embed]
+verify_jwt = false
