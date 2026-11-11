@@ -83,7 +83,10 @@ export class MemoryStore implements KhataStore {
     return p;
   }
 
+  linkFails = false;
+
   async createPaymentLink({ amountPaise }: Parameters<KhataStore["createPaymentLink"]>[0]) {
+    if (this.linkFails) throw new Error("Cashfree create link didn't answer within 15 s");
     const link: PaymentLink = { id: this.id("link"), url: `https://payments-test.cashfree.com/links/${this.seq}`, amountPaise, status: "ACTIVE", expiresAt: null, customerNotified: false };
     this.links.push(link);
     return link;

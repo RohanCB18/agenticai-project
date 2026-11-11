@@ -41,12 +41,21 @@ const notLinked = (channel: MessagingChannel) =>
 const HELP =
   'Send me a voice note or a text in any language, like "Ramesh ne 450 ka saaman liya", "Fatima ne 200 diye" or "Kaun kaun udhaar pe hai?" You can also send a photo of a supplier bill to update your stock, or /reminders to see who should pay you and send them payment links.';
 
+/** Time for thinking in one turn: the webhook function is stopped at 60 s (maxDuration). */
+const TURN_BUDGET_MS = 45_000;
+const FAILED_TURN = "⚠️ Sorry, I couldn't finish that just now. Please send it again in a minute.";
+// Asking again is safe: a new payment link cancels the customer's open one, and the same
+// wholesaler quote always gives the same order.
+const FAILED_AFTER_APPROVAL =
+  "⚠️ Sorry, I couldn't finish after your OK, so I couldn't show you the result. It may have gone through: ask again and I'll redo it safely (a new payment link replaces the old one, and the same wholesaler quote never orders twice).";
+
 /**
  * Handles one incoming chat message on any messaging channel. Runs after the webhook has
  * answered the platform, using the admin client: there is no browser session, so the
  * linked chat account is the identity. Every khata query is still scoped to its merchant.
  */
 export async function handleInbound(inbound: Inbound, sender: ChannelSender) {
+  const startedAt = Date.now();
   const admin = createAdminClient();
   const { channel, chatId } = inbound;
 
@@ -128,28 +137,43 @@ export async function handleInbound(inbound: Inbound, sender: ChannelSender) {
     buildKhataAgent({ db: admin, merchant: { id: merchant.id, shopName: merchant.shop_name, language }, source: channel, channel, extraNote });
   // Each run is one Langfuse trace, under this shop and chat. Retries are tagged with why.
   const trace = { merchantId: merchant.id, channel, source: replyLanguage ? "voice" : undefined };
-  const result = await traced(trace, () => agentFor().generate({ messages }));
-  console.info(`[munshi] ${channel} run: ${runSummary(result)}`);
-  let responseMessages = result.responseMessages;
-  let text = result.text.trim();
+  // The run and its retries share what is left of the turn's time, so it ends while there is still
+  // time to tell the owner. Past the platform's limit the function is stopped with nothing said.
+  const abortSignal = AbortSignal.timeout(Math.max(5_000, TURN_BUDGET_MS - (Date.now() - startedAt)));
+  const afterApproval = inbound.kind === "decision" && inbound.approved;
+  let responseMessages: ModelMessage[];
+  let text: string;
+  try {
+    const result = await traced(trace, () => agentFor().generate({ messages, abortSignal }));
+    console.info(`[munshi] ${channel} run: ${runSummary(result)}`);
+    responseMessages = result.responseMessages;
+    text = result.text.trim();
 
-  // A reply that says "likh diya" with no tool behind it: try once more from the owner's
-  // message, told what went wrong. If it still claims without acting, say so plainly.
-  if (claimsUnbackedAction(text, completedActions(responseMessages))) {
-    console.warn("[munshi] reply claimed an action no tool took; retrying:", text);
-    const retry = await traced({ ...trace, reason: "retry:unbacked-claim" }, () => agentFor(UNBACKED_CLAIM_NOTE).generate({ messages }));
-    console.info(`[munshi] ${channel} retry run: ${runSummary(retry)}`);
-    responseMessages = retry.responseMessages;
-    text = retry.text.trim();
-    if (claimsUnbackedAction(text, completedActions(responseMessages))) text = `${text}\n\n${NOTHING_SAVED}`;
-  }
-  // The model sometimes ends with no words at all. Give it one more turn with any tool results in
-  // hand, told its answer was empty: asked again with nothing new, it came back empty again.
-  if (!text && pendingApprovals([...messages, ...responseMessages]).length === 0) {
-    const retry = await traced({ ...trace, reason: "retry:empty-reply" }, () => agentFor(EMPTY_REPLY_NOTE).generate({ messages: [...messages, ...responseMessages] }));
-    console.warn(`[munshi] ${channel} empty reply; asked again: ${runSummary(retry)}`);
-    responseMessages = [...responseMessages, ...retry.responseMessages];
-    text = retry.text.trim() || "Sorry, I couldn't put that into words. Please ask again.";
+    // A reply that says "likh diya" with no tool behind it: try once more from the owner's
+    // message, told what went wrong. If it still claims without acting, say so plainly.
+    if (claimsUnbackedAction(text, completedActions(responseMessages))) {
+      console.warn("[munshi] reply claimed an action no tool took; retrying:", text);
+      const retry = await traced({ ...trace, reason: "retry:unbacked-claim" }, () => agentFor(UNBACKED_CLAIM_NOTE).generate({ messages, abortSignal }));
+      console.info(`[munshi] ${channel} retry run: ${runSummary(retry)}`);
+      responseMessages = retry.responseMessages;
+      text = retry.text.trim();
+      if (claimsUnbackedAction(text, completedActions(responseMessages))) text = `${text}\n\n${NOTHING_SAVED}`;
+    }
+    // The model sometimes ends with no words at all. Give it one more turn with any tool results in
+    // hand, told its answer was empty: asked again with nothing new, it came back empty again.
+    if (!text && pendingApprovals([...messages, ...responseMessages]).length === 0) {
+      const retry = await traced({ ...trace, reason: "retry:empty-reply" }, () =>
+        agentFor(EMPTY_REPLY_NOTE).generate({ messages: [...messages, ...responseMessages], abortSignal }),
+      );
+      console.warn(`[munshi] ${channel} empty reply; asked again: ${runSummary(retry)}`);
+      responseMessages = [...responseMessages, ...retry.responseMessages];
+      text = retry.text.trim() || "Sorry, I couldn't put that into words. Please ask again.";
+    }
+  } catch (error) {
+    console.error(`[munshi] ${channel} run failed${abortSignal.aborted ? " (out of time)" : ""}:`, error instanceof Error ? error.message : error);
+    // The thread isn't saved, so an approval stays unanswered and the next message closes it. What
+    // a tool already did (a link created) stays done: after an OK, the owner must check first.
+    return sender.sendText(chatId, afterApproval ? FAILED_AFTER_APPROVAL : FAILED_TURN);
   }
   messages = trimThread([...messages, ...responseMessages]);
   await admin.from("agent_threads").upsert({ merchant_id: merchant.id, channel, messages, updated_at: new Date().toISOString() });

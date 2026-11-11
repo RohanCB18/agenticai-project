@@ -96,6 +96,16 @@ describe("khata tools", () => {
     expect(out).toMatchObject({ status: "missing_phone" });
   });
 
+  it("says a link wasn't sent when the payment service fails", async () => {
+    await tools.recordCredit.execute!({ customerName: "Ramesh", amount: 430 }, ctx);
+    store.linkFails = true;
+    const quiet = vi.spyOn(console, "error").mockImplementation(() => {});
+    const out = await tools.sendPaymentLink.execute!({ customerName: "Ramesh" }, ctx);
+    quiet.mockRestore();
+    expect(out).toMatchObject({ status: "link_failed", customer: "Ramesh", hint: expect.stringContaining("NOT created") });
+    expect(store.links).toHaveLength(0);
+  });
+
   it("tells the agent when the customer wasn't notified of a link", async () => {
     await tools.recordCredit.execute!({ customerName: "Ramesh", amount: 430 }, ctx);
     const out = await tools.sendPaymentLink.execute!({ customerName: "Ramesh" }, ctx);

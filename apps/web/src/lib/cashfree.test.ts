@@ -1,6 +1,28 @@
 import { createHmac } from "node:crypto";
-import { describe, expect, it } from "vitest";
-import { parseCashfreeEvent, verifyWebhookSignature } from "./cashfree";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { getLink, parseCashfreeEvent, verifyWebhookSignature } from "./cashfree";
+
+describe("Cashfree calls", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
+  });
+
+  it("gives every call a time limit, and says plainly when it ran out", async () => {
+    vi.stubEnv("CASHFREE_CLIENT_ID", "id");
+    vi.stubEnv("CASHFREE_CLIENT_SECRET", "secret");
+    const signals: unknown[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: string, init?: RequestInit) => {
+        signals.push(init?.signal);
+        throw new DOMException("The operation was aborted due to timeout", "TimeoutError");
+      }),
+    );
+    await expect(getLink("munshi_1")).rejects.toThrow("didn't answer within 15 s");
+    expect(signals[0]).toBeInstanceOf(AbortSignal);
+  });
+});
 
 describe("Cashfree events", () => {
   it("reads a paid link", () => {

@@ -380,7 +380,18 @@ export function createKhataTools(store: KhataStore, shopName = "your shop", opti
         const due = await amountDue(store, r.customer, amount);
         if (!due.ok) return due.result;
 
-        const link = await store.createPaymentLink({ customer: r.customer, amountPaise: due.amountPaise, purpose: `Udhaar payment to ${shopName}` });
+        let link;
+        try {
+          link = await store.createPaymentLink({ customer: r.customer, amountPaise: due.amountPaise, purpose: `Udhaar payment to ${shopName}` });
+        } catch (error) {
+          // Cashfree down or slow: say so, rather than a run that errors with nothing for the owner.
+          console.error("[munshi] payment link failed:", error instanceof Error ? error.message : error);
+          return {
+            status: "link_failed",
+            customer: r.customer.name,
+            hint: "The payment link was NOT created (the payment service didn't respond). Tell the owner it wasn't sent and to try again in a few minutes.",
+          };
+        }
         await store.audit("payment_link_sent", { customerId: r.customer.id, linkId: link.id, amountPaise: due.amountPaise });
         return {
           status: "sent",

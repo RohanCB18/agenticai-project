@@ -83,6 +83,77 @@ export function withFallback(primary: LanguageModelV4, fallback: LanguageModelV4
   };
 }
 
+export class ModelTimeoutError extends Error {
+  constructor(modelId: string, ms: number) {
+    super(`${modelId} didn't answer within ${ms / 1000} s`);
+    this.name = "ModelTimeoutError";
+  }
+}
+
+/**
+ * How long one Sarvam call may take before it is asked again. Steps normally take 2-5 s; live, one
+ * never answered and the turn hung until Vercel stopped it at 60 s with nothing said to the owner.
+ * Two tries fit inside a turn's time (see TURN_BUDGET_MS in the web app's conversation.ts).
+ */
+export const SARVAM_CALL_TIMEOUT_MS = 15_000;
+
+/**
+ * Fails a call that hasn't answered within `ms`. For a stream that means the first response: once
+ * it is streaming it is left to finish.
+ */
+export function withTimeout(model: LanguageModelV4, ms: number): LanguageModelV4 {
+  async function limited<T>(options: Parameters<LanguageModelV4["doGenerate"]>[0], call: (options: Parameters<LanguageModelV4["doGenerate"]>[0]) => PromiseLike<T>) {
+    const timer = new AbortController();
+    const timeout = setTimeout(() => timer.abort(new ModelTimeoutError(model.modelId, ms)), ms);
+    const abortSignal = options.abortSignal ? AbortSignal.any([options.abortSignal, timer.signal]) : timer.signal;
+    try {
+      return await call({ ...options, abortSignal });
+    } catch (error) {
+      throw timer.signal.aborted ? timer.signal.reason : error;
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+  return {
+    specificationVersion: "v4",
+    provider: model.provider,
+    modelId: model.modelId,
+    supportedUrls: model.supportedUrls,
+    doGenerate: (options) => limited(options, (o) => model.doGenerate(o)),
+    doStream: (options) => limited(options, (o) => model.doStream(o)),
+  };
+}
+
+/**
+ * Asks once more when a call timed out (ModelTimeoutError from withTimeout). Munshi runs on Sarvam
+ * alone, so a stuck request is retried rather than handed to another model. Other errors are left
+ * to the AI SDK's own retries (rate limits, 5xx), and nothing is retried once the turn is out of time.
+ */
+export function retryOnTimeout(model: LanguageModelV4): LanguageModelV4 {
+  async function again<T>(options: Parameters<LanguageModelV4["doGenerate"]>[0], call: (options: Parameters<LanguageModelV4["doGenerate"]>[0]) => PromiseLike<T>) {
+    try {
+      return await call(options);
+    } catch (error) {
+      if (!(error instanceof ModelTimeoutError) || options.abortSignal?.aborted) throw error;
+      console.warn(`[munshi] ${error.message}; asking once more`);
+      return call(options);
+    }
+  }
+  return {
+    specificationVersion: "v4",
+    provider: model.provider,
+    modelId: model.modelId,
+    supportedUrls: model.supportedUrls,
+    doGenerate: (options) => again(options, (o) => model.doGenerate(o)),
+    doStream: (options) => again(options, (o) => model.doStream(o)),
+  };
+}
+
+/** Sarvam with a time limit per call, and one more try when a call stalls. */
+function reliableSarvam(apiKey: string) {
+  return retryOnTimeout(withTimeout(sarvamModel(apiKey), SARVAM_CALL_TIMEOUT_MS));
+}
+
 export class MissingModelKeyError extends Error {
   constructor() {
     super("No language model is configured. Add SARVAM_API_KEY (and ideally ANTHROPIC_API_KEY as a fallback) to apps/web/.env.local.");
@@ -90,13 +161,16 @@ export class MissingModelKeyError extends Error {
   }
 }
 
-/** Sarvam first, Claude as fallback; whichever keys exist decide the chain. */
+/**
+ * Sarvam, retried once when a call stalls. Production runs on Sarvam alone; an ANTHROPIC_API_KEY,
+ * if one is ever set, adds Claude behind it. Whichever keys exist decide the chain.
+ */
 export function resolveModel(config: ModelConfig, onFallback?: (error: unknown) => void): LanguageModelV4 {
   const { sarvamApiKey, anthropicApiKey, fallbackModel } = config;
   if (sarvamApiKey && anthropicApiKey) {
-    return withFallback(sarvamModel(sarvamApiKey), claudeModel(anthropicApiKey, fallbackModel), onFallback);
+    return withFallback(reliableSarvam(sarvamApiKey), claudeModel(anthropicApiKey, fallbackModel), onFallback);
   }
-  if (sarvamApiKey) return sarvamModel(sarvamApiKey);
+  if (sarvamApiKey) return reliableSarvam(sarvamApiKey);
   if (anthropicApiKey) return claudeModel(anthropicApiKey, fallbackModel);
   throw new MissingModelKeyError();
 }

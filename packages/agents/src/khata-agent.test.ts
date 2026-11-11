@@ -1,8 +1,8 @@
 import type { LanguageModelV4GenerateResult } from "@ai-sdk/provider";
 import { MockLanguageModelV4 } from "ai/test";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { asksForQr, createKhataAgent, FRESH_FIGURES_RULE, replyLanguageRule } from "./khata-agent";
-import { unstreamForcedToolCalls, withFallback } from "./models";
+import { ModelTimeoutError, retryOnTimeout, unstreamForcedToolCalls, withFallback, withTimeout } from "./models";
 import { MemoryStore } from "./testing/memory-store";
 
 const usage = {
@@ -211,6 +211,69 @@ describe("Sarvam to Claude fallback", () => {
 
     expect(result.text).toBe("fallback answer");
     expect(errors).toHaveLength(1);
+  });
+
+  /** A model that never answers, like the live Sarvam call that hung a turn: only an abort ends it. */
+  const stalled = () =>
+    new MockLanguageModelV4({
+      doGenerate: (options) =>
+        new Promise<LanguageModelV4GenerateResult>((_, reject) => options.abortSignal?.addEventListener("abort", () => reject(options.abortSignal!.reason))),
+    });
+
+  it("fails a call that doesn't answer in time, instead of hanging the turn", async () => {
+    const agent = createKhataAgent({ model: withTimeout(stalled(), 30), store: await seededStore(), shopName: "T", language: "en", specialists: false });
+    await expect(agent.generate({ prompt: "hello" })).rejects.toThrow("didn't answer within 0.03 s");
+  });
+
+  /** Stalls on the first `stalls` calls, then answers: how a stuck Sarvam request looks. */
+  function stallsThenAnswers(stalls: number, answer: string) {
+    let calls = 0;
+    const model = new MockLanguageModelV4({
+      doGenerate: (options) =>
+        ++calls <= stalls
+          ? new Promise<LanguageModelV4GenerateResult>((_, reject) => options.abortSignal?.addEventListener("abort", () => reject(options.abortSignal!.reason)))
+          : Promise.resolve(text(answer)),
+    });
+    return { model, calls: () => calls };
+  }
+
+  it("asks Sarvam once more when a call stalls", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const sarvam = stallsThenAnswers(1, "second try");
+    const agent = createKhataAgent({ model: retryOnTimeout(withTimeout(sarvam.model, 30)), store: await seededStore(), shopName: "T", language: "en", specialists: false });
+
+    expect((await agent.generate({ prompt: "hello" })).text).toBe("second try");
+    expect(sarvam.calls()).toBe(2);
+    warn.mockRestore();
+  });
+
+  it("gives up after a second stall, so the turn can tell the owner", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const sarvam = stallsThenAnswers(2, "never");
+    const agent = createKhataAgent({ model: retryOnTimeout(withTimeout(sarvam.model, 30)), store: await seededStore(), shopName: "T", language: "en", specialists: false });
+
+    await expect(agent.generate({ prompt: "hello" })).rejects.toBeInstanceOf(ModelTimeoutError);
+    expect(sarvam.calls()).toBe(2);
+    warn.mockRestore();
+  });
+
+  it("doesn't retry an error that isn't a stall", async () => {
+    let calls = 0;
+    const failing = new MockLanguageModelV4({
+      doGenerate: async () => {
+        calls++;
+        throw new Error("400 bad request");
+      },
+    });
+    const agent = createKhataAgent({ model: retryOnTimeout(withTimeout(failing, 1000)), store: await seededStore(), shopName: "T", language: "en", specialists: false });
+
+    await expect(agent.generate({ prompt: "hello" })).rejects.toThrow("400 bad request");
+    expect(calls).toBe(1);
+  });
+
+  it("leaves a call that answers in time alone", async () => {
+    const agent = createKhataAgent({ model: withTimeout(scripted(text("on time")), 1000), store: await seededStore(), shopName: "T", language: "en", specialists: false });
+    expect((await agent.generate({ prompt: "hello" })).text).toBe("on time");
   });
 });
 

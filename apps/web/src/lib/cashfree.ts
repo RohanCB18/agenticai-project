@@ -27,9 +27,22 @@ function config() {
 /** Cashfree only delivers link SMS in production; in sandbox the customer hears nothing. */
 export const cashfreeSendsSms = isProduction;
 
+/**
+ * How long one Cashfree call may take. Live, a turn after a payment-link approval hung until Vercel
+ * stopped the function at 60 s and the owner heard nothing: a stalled call must fail in time for
+ * Munshi to say so.
+ */
+export const CASHFREE_TIMEOUT_MS = 15_000;
+
 async function request<T>(what: string, path: string, init: RequestInit = {}): Promise<T> {
   const { baseUrl, headers } = config();
-  const res = await fetch(`${baseUrl}${path}`, { ...init, headers: { ...headers, ...init.headers } });
+  let res: Response;
+  try {
+    res = await fetch(`${baseUrl}${path}`, { ...init, headers: { ...headers, ...init.headers }, signal: AbortSignal.timeout(CASHFREE_TIMEOUT_MS) });
+  } catch (error) {
+    if (error instanceof Error && error.name === "TimeoutError") throw new Error(`Cashfree ${what} didn't answer within ${CASHFREE_TIMEOUT_MS / 1000} s`);
+    throw error;
+  }
   if (!res.ok) throw new Error(`Cashfree ${what} failed (${res.status}): ${(await res.text()).slice(0, 300)}`);
   return (await res.json()) as T;
 }
