@@ -1,9 +1,11 @@
 import type { LanguageModelV4GenerateResult } from "@ai-sdk/provider";
+import type { ModelMessage } from "ai";
 import { MockLanguageModelV4 } from "ai/test";
 import { describe, expect, it, vi } from "vitest";
 import { asksForQr, createKhataAgent, FRESH_FIGURES_RULE, replyLanguageRule } from "./khata-agent";
 import { ModelTimeoutError, retryOnTimeout, unstreamForcedToolCalls, withFallback, withTimeout } from "./models";
 import { MemoryStore } from "./testing/memory-store";
+import { closePendingApprovals } from "./threads";
 
 const usage = {
   inputTokens: { total: 10, noCache: 10, cacheRead: undefined, cacheWrite: undefined },
@@ -34,6 +36,30 @@ async function seededStore() {
   await store.addCustomer({ name: "Ramesh", phone: "+919800000001" });
   return store;
 }
+
+describe("an approval the owner never answered", () => {
+  it("doesn't break the next turn", async () => {
+    // Live: a turn after a link approval was cut off before the thread was saved, so the saved
+    // thread ended on the request. Every message after it failed with "Tool result is missing".
+    const store = await seededStore();
+    const history: ModelMessage[] = [
+      { role: "user", content: "Ramesh ko link bhejo" },
+      {
+        role: "assistant",
+        content: [
+          { type: "tool-call", toolCallId: "chatcmpl-tool-1", toolName: "sendPaymentLink", input: { customerName: "Ramesh" } },
+          { type: "tool-approval-request", approvalId: "appr_1", toolCallId: "chatcmpl-tool-1" },
+        ],
+      },
+    ];
+    const agent = createKhataAgent({ model: scripted(text("Namaste")), store, shopName: "T", language: "en", specialists: false });
+
+    const result = await agent.generate({ messages: [...closePendingApprovals(history), { role: "user", content: "Ramesh ko link bhejo" }] });
+
+    expect(result.text).toBe("Namaste");
+    expect(store.links).toHaveLength(0); // the request the owner moved on from never runs
+  });
+});
 
 describe("reply language", () => {
   it("names the language and script of the owner's message", () => {

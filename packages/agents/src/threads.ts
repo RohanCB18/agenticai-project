@@ -33,20 +33,23 @@ export function approvalResponse(approvalId: string, approved: boolean, reason?:
 /**
  * Before a new owner message, closes approvals they moved on from: an unanswered request
  * is denied, so the agent never runs it later and the history stays valid.
+ *
+ * The denied tool result is written here too. The AI SDK turns an approval answer into a result
+ * only when the answer is the last message; with the owner's new message after it, the call was
+ * left without a result and every later turn failed ("Tool result is missing for tool call").
  */
 export function closePendingApprovals(messages: ModelMessage[]): ModelMessage[] {
   const pending = pendingApprovals(messages);
   if (pending.length === 0) return messages;
+  const reason = "The owner sent a new message instead of approving.";
   return [
     ...messages,
     {
       role: "tool",
-      content: pending.map((p) => ({
-        type: "tool-approval-response" as const,
-        approvalId: p.approvalId,
-        approved: false,
-        reason: "The owner sent a new message instead of approving.",
-      })),
+      content: pending.flatMap((p) => [
+        { type: "tool-approval-response" as const, approvalId: p.approvalId, approved: false, reason },
+        { type: "tool-result" as const, toolCallId: p.toolCallId, toolName: p.toolName, output: { type: "execution-denied" as const, reason } },
+      ]),
     },
   ];
 }

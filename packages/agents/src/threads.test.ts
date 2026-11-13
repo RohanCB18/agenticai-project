@@ -22,9 +22,15 @@ describe("threads", () => {
     expect(pendingApprovals([...asked, approvalResponse("appr_1", true)])).toEqual([]);
   });
 
-  it("denies approvals the owner moved on from", () => {
+  it("denies approvals the owner moved on from, with a result for the tool call", () => {
     const closed = closePendingApprovals(asked);
-    expect(closed.at(-1)).toMatchObject({ role: "tool", content: [{ type: "tool-approval-response", approvalId: "appr_1", approved: false }] });
+    expect(closed.at(-1)).toMatchObject({
+      role: "tool",
+      content: [
+        { type: "tool-approval-response", approvalId: "appr_1", approved: false },
+        { type: "tool-result", toolCallId: "call_1", toolName: "sendPaymentLink", output: { type: "execution-denied" } },
+      ],
+    });
     expect(pendingApprovals(closed)).toEqual([]);
     expect(closePendingApprovals(closed)).toBe(closed);
   });
