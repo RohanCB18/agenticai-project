@@ -94,16 +94,17 @@ export async function cancelOpenRequests(db: SupabaseClient, merchantId: string,
 
 /** Tells the owner on their linked chat apps that money arrived. A failed notice never fails the payment. */
 export async function notifyOwnerOfPayment(db: SupabaseClient, merchantId: string, customerId: string, paidPaise: number) {
-  const [{ data: links }, { data: balance }] = await Promise.all([
-    db.from("channel_links").select("channel, external_user_id").eq("merchant_id", merchantId),
-    db.from("customer_balances").select("name, outstanding_paise").eq("merchant_id", merchantId).eq("customer_id", customerId).maybeSingle(),
-  ]);
+  const { data: balance } = await db.from("customer_balances").select("name, outstanding_paise").eq("merchant_id", merchantId).eq("customer_id", customerId).maybeSingle();
   const owes = Number(balance?.outstanding_paise ?? 0);
-  const text = `💰 ${balance?.name ?? "Customer"} paid ${formatINR(paidPaise)}. ${owes > 0 ? `Still owes ${formatINR(owes)}.` : "Khata clear."}`;
+  await notifyOwner(db, merchantId, `💰 ${balance?.name ?? "Customer"} paid ${formatINR(paidPaise)}. ${owes > 0 ? `Still owes ${formatINR(owes)}.` : "Khata clear."}`);
+}
 
+/** Sends the owner a message on every chat app linked to the shop. Failures are logged, never thrown. */
+export async function notifyOwner(db: SupabaseClient, merchantId: string, text: string) {
+  const { data: links } = await db.from("channel_links").select("channel, external_user_id").eq("merchant_id", merchantId);
   for (const link of links ?? []) {
     await SENDERS[link.channel as MessagingChannel].sendText(link.external_user_id, text).catch((error: unknown) => {
-      console.error("[munshi] payment notice failed:", error);
+      console.error("[munshi] owner notice failed:", error);
     });
   }
 }

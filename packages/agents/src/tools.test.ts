@@ -302,3 +302,95 @@ describe("lookupGst", () => {
     expect(await tools.lookupGst.execute!({ item: "rice" }, ctx)).toMatchObject({ status: "no_knowledge" });
   });
 });
+
+describe("paying suppliers", () => {
+  const order = (orderId: string, totalPaise: number) => ({
+    supplier: "Sharma Traders",
+    orderId,
+    quoteId: `q_${orderId}`,
+    lines: [],
+    total: `₹${totalPaise / 100}`,
+    totalPaise,
+    deliverySlot: "Tomorrow 9-11 am",
+    payment: "Pay on delivery",
+  });
+
+  beforeEach(() => {
+    store.suppliers = [{ id: "sup_1", name: "Sharma Traders", aliases: [], account: "UPI su•••@upi", verified: true }];
+    store.supplierOrders = [order("ST-1", 420000), order("ST-2", 150000)];
+  });
+
+  it("shows what is due and where it would go", async () => {
+    const out = await tools.supplierDues.execute!({ supplierName: "sharma traders" }, ctx);
+    expect(out).toMatchObject({ status: "dues", supplier: "Sharma Traders", payTo: "UPI su•••@upi", totalDue: "₹5,700" });
+  });
+
+  it("pays a verified supplier and stops showing the paid order as due", async () => {
+    const out = await tools.paySupplier.execute!({ supplierName: "Sharma", amount: 4200 }, ctx);
+    expect(out).toMatchObject({ status: "payout_started", supplier: "Sharma Traders", amount: "₹4,200", to: "UPI su•••@upi", forOrder: "ST-1" });
+    expect(store.payouts).toEqual([expect.objectContaining({ supplierId: "sup_1", amountPaise: 420000, supplierOrderId: "ST-1" })]);
+    expect(await tools.supplierDues.execute!({ supplierName: "Sharma Traders" }, ctx)).toMatchObject({ totalDue: "₹1,500" });
+  });
+
+  it("reports a payment Cashfree finished at once, and one it refused", async () => {
+    store.payoutStatus = "success";
+    expect(await tools.paySupplier.execute!({ supplierName: "Sharma Traders", amount: 1500 }, ctx)).toMatchObject({ status: "paid", utr: "UTR123" });
+    store.payoutStatus = "failed";
+    expect(await tools.paySupplier.execute!({ supplierName: "Sharma Traders", amount: 4200 }, ctx)).toMatchObject({ status: "payout_failed", reason: "Invalid beneficiary account" });
+  });
+
+  it("never pays an account the owner hasn't confirmed, or a supplier it doesn't know", async () => {
+    store.suppliers[0]!.verified = false;
+    expect(await tools.paySupplier.execute!({ supplierName: "Sharma Traders", amount: 4200 }, ctx)).toMatchObject({
+      status: "no_payout_account",
+      hint: expect.stringContaining("dashboard"),
+    });
+    expect(await tools.paySupplier.execute!({ supplierName: "Gupta Wholesale", amount: 100 }, ctx)).toMatchObject({ status: "no_payout_account" });
+    expect(await tools.supplierDues.execute!({ supplierName: "Sharma Traders" }, ctx)).toMatchObject({ status: "no_payout_account", totalDue: "₹5,700" });
+    expect(store.payouts).toHaveLength(0);
+  });
+
+  it("says nothing was paid when the payment service fails", async () => {
+    store.payoutFails = true;
+    const quiet = vi.spyOn(console, "error").mockImplementation(() => {});
+    const out = await tools.paySupplier.execute!({ supplierName: "Sharma Traders", amount: 4200 }, ctx);
+    quiet.mockRestore();
+    expect(out).toMatchObject({ status: "payout_failed", hint: expect.stringContaining("NOT made") });
+  });
+});
+
+describe("makeChart", () => {
+  const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47]);
+  const code = 'import pandas as pd\npd.read_csv("ledger.csv")';
+
+  it("runs the program over the shop's data and keeps the picture", async () => {
+    await tools.recordSale.execute!({ kind: "sale", amount: 1200 }, ctx);
+    const runs: { code: string; files: Record<string, string> }[] = [];
+    const charted = createKhataTools(store, "S", { charts: { run: async (input) => (runs.push(input), { ok: true, png, stdout: "Total Rs 1200" }) } });
+
+    const out = await charted.makeChart.execute!({ title: "Sales this week", days: 7, code }, ctx);
+
+    expect(out).toMatchObject({ status: "chart_ready", chartId: store.charts[0]!.id, title: "Sales this week", entries: 1, summary: "Total Rs 1200" });
+    expect(runs[0]!.code).toBe(code);
+    expect(runs[0]!.files["ledger.csv"]).toContain(",sale,1200,,");
+    expect(store.charts[0]!.png).toEqual(png);
+  });
+
+  it("hands back a program's error for the agent to fix, and says when the sandbox is down", async () => {
+    await tools.recordSale.execute!({ kind: "sale", amount: 500 }, ctx);
+    const failing = createKhataTools(store, "S", { charts: { run: async () => ({ ok: false, error: "KeyError: 'amt'" }) } });
+    expect(await failing.makeChart.execute!({ title: "Sales", days: 7, code }, ctx)).toMatchObject({ status: "chart_error", error: "KeyError: 'amt'" });
+
+    const down = createKhataTools(store, "S", { charts: { run: async () => Promise.reject(new Error("sandbox timeout")) } });
+    const quiet = vi.spyOn(console, "error").mockImplementation(() => {});
+    expect(await down.makeChart.execute!({ title: "Sales", days: 7, code }, ctx)).toMatchObject({ status: "chart_unavailable" });
+    quiet.mockRestore();
+    expect(store.charts).toHaveLength(0);
+  });
+
+  it("says when charts are off or there is nothing to chart", async () => {
+    expect(await tools.makeChart.execute!({ title: "Sales", days: 7, code }, ctx)).toMatchObject({ status: "charts_off" });
+    const charted = createKhataTools(store, "S", { charts: { run: async () => ({ ok: true, png, stdout: "" }) } });
+    expect(await charted.makeChart.execute!({ title: "Sales", days: 7, code }, ctx)).toMatchObject({ status: "no_data" });
+  });
+});

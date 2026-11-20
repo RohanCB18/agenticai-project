@@ -23,6 +23,16 @@ export type PaymentCheck = { paidPaise: Paise; stillOpen: number };
 /** Something the owner asked Munshi to remember. customerId is null for a shop-wide fact. */
 export type Memory = { id: string; fact: string; customerId: string | null; createdAt: string };
 
+/**
+ * A supplier the shop pays. `account` is where money would go ("UPI su•••@upi"), set only by the
+ * owner in the dashboard; `verified` means the owner confirmed it with the supplier. The agent can
+ * pay only a verified account, and can never add or change one.
+ */
+export type Supplier = { id: string; name: string; aliases: string[]; account: string | null; verified: boolean };
+/** A wholesaler order not yet paid (nor being paid). */
+export type SupplierOrderDue = { id: string; orderRef: string; totalPaise: Paise; createdAt: string };
+export type SupplierPayout = { id: string; status: "pending" | "success" | "failed" | "reversed"; amountPaise: Paise; utr: string | null; reason: string | null };
+
 export interface KhataStore {
   listCustomers(): Promise<Customer[]>;
   addCustomer(input: { name: string; phone?: string; language?: Language; aliases?: string[] }): Promise<Customer>;
@@ -48,4 +58,11 @@ export interface KhataStore {
   audit(action: string, details: Record<string, unknown>): Promise<void>;
   /** Keeps a confirmed wholesaler order. Saving the same order twice keeps one. */
   saveSupplierOrder(order: SupplierOrder & { quoteId: string }): Promise<void>;
+  listSuppliers(): Promise<Supplier[]>;
+  /** Orders to a supplier, by name as the wholesaler gave it, that nothing has paid yet. Newest first. */
+  unpaidSupplierOrders(supplierName: string): Promise<SupplierOrderDue[]>;
+  /** Pays a verified supplier through Cashfree Payouts. Only called after the owner approved. */
+  paySupplier(input: { supplier: Supplier; amountPaise: Paise; supplierOrderId?: string }): Promise<SupplierPayout>;
+  /** Keeps a chart Munshi drew, so the chat can show it. */
+  saveChart(input: { title: string; png: Uint8Array }): Promise<{ id: string }>;
 }

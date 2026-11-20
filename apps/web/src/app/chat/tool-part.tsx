@@ -24,6 +24,9 @@ const LABELS: Record<string, string> = {
   sendPaymentLink: "UPI payment link",
   askSupplierQuote: "Wholesaler quote",
   placeSupplierOrder: "Wholesaler order",
+  supplierDues: "What you owe the supplier",
+  makeChart: "Chart",
+  paySupplier: "Supplier payment",
   updateCustomer: "Customer updated",
   customerHistory: "Khata history",
   lookupGst: "GST (official rates)",
@@ -63,6 +66,29 @@ export function ToolPart({ part, onDecision }: { part: Part; onDecision: Decide 
     );
   }
 
+  if (part.state === "approval-requested" && !part.approval.isAutomatic && name === "paySupplier") {
+    const input = part.input as { supplierName?: string; amount?: number };
+    return (
+      <div className="flex max-w-sm flex-col gap-3 rounded-lg border-2 border-accent bg-surface p-4">
+        <p className="text-sm uppercase tracking-wider text-accent">Needs your OK</p>
+        <p>
+          Pay <strong>{input.supplierName}</strong> <strong>₹{input.amount?.toLocaleString("en-IN")}</strong> from your Cashfree balance?
+        </p>
+        <div className="flex gap-2">
+          <button onClick={() => onDecision({ id: part.approval.id, approved: true })} className="rounded-md bg-accent px-4 py-2 font-medium text-on-accent">
+            Haan, pay karo
+          </button>
+          <button
+            onClick={() => onDecision({ id: part.approval.id, approved: false, reason: "Owner declined" })}
+            className="rounded-md border border-line px-4 py-2"
+          >
+            Nahi
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   if (part.state === "approval-requested" && !part.approval.isAutomatic) {
     const input = part.input as { customerName?: string; amount?: number };
     return (
@@ -88,7 +114,10 @@ export function ToolPart({ part, onDecision }: { part: Part; onDecision: Decide 
   }
 
   if (part.state === "approval-responded") return <p className="text-sm text-muted">{part.approval.approved ? "Approved. Sending…" : "Not sent."}</p>;
-  if (part.state === "output-denied") return <p className="text-sm text-muted">{name === "placeSupplierOrder" ? "Order not placed." : "Payment link not sent."}</p>;
+  if (part.state === "output-denied") {
+    const denied: Record<string, string> = { placeSupplierOrder: "Order not placed.", paySupplier: "Supplier not paid." };
+    return <p className="text-sm text-muted">{denied[name] ?? "Payment link not sent."}</p>;
+  }
   if (part.state === "output-error") {
     return <p className="rounded-md bg-danger-soft px-3 py-2 text-sm text-danger">{label} failed: {part.errorText}</p>;
   }
@@ -266,6 +295,43 @@ function Output({ name, out }: { name: string; out: Record<string, unknown> }) {
         {String(out.customer)}
         {out.previousName ? ` (was ${String(out.previousName)})` : ""}
         {out.phone ? ` · phone ${String(out.phone)}` : ""}
+      </p>
+    );
+  }
+
+  if (name === "makeChart" && out.status === "chart_ready") {
+    return (
+      <figure className="flex flex-col gap-2">
+        {/* eslint-disable-next-line @next/next/no-img-element -- a private chart image, not a page asset */}
+        <img src={`/api/charts/${String(out.chartId)}`} alt={String(out.title)} width={480} height={270} className="w-full rounded-md bg-white" />
+        <figcaption className="text-muted">{String(out.title)}</figcaption>
+      </figure>
+    );
+  }
+  if (name === "makeChart" && out.status === "chart_error") return <p className="text-muted">Redrawing the chart…</p>;
+
+  if (name === "supplierDues" && out.status === "dues") {
+    const orders = (out.unpaidOrders ?? []) as { orderId: string; amount: string; date: string }[];
+    return (
+      <div className="flex flex-col gap-1">
+        {orders.map((o) => (
+          <div key={o.orderId} className="flex justify-between gap-6">
+            <span>
+              {o.orderId} <span className="text-muted">· {o.date}</span>
+            </span>
+            <span className="font-mono tabular-nums">{o.amount}</span>
+          </div>
+        ))}
+        <p className="mt-1 border-t border-line pt-1 font-medium">Due {String(out.totalDue)}</p>
+        <p className="text-muted">Pays to {String(out.payTo)}</p>
+      </div>
+    );
+  }
+
+  if (name === "paySupplier" && (out.status === "paid" || out.status === "payout_started")) {
+    return (
+      <p>
+        {String(out.amount)} to {String(out.supplier)} ({String(out.to)}): {out.status === "paid" ? `paid${out.utr ? `, UTR ${String(out.utr)}` : ""}` : "on its way"}
       </p>
     );
   }

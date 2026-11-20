@@ -31,6 +31,8 @@ describe("receiptLines", () => {
         result("updateCustomer", { status: "updated", customer: "Fatima Begum", previousName: "Fatima", phone: "9800000002" }),
         result("sendPaymentLink", { status: "sent", url: "https://pay" }),
         result("lookupGst", { status: "found", entries: [] }),
+        result("paySupplier", { status: "payout_started", supplier: "Sharma Traders", amount: "₹4,200", to: "UPI su•••@upi" }),
+        result("paySupplier", { status: "paid", supplier: "Sharma Traders", amount: "₹1,500", to: "UPI su•••@upi", utr: "UTR9" }),
       ]),
     );
     expect(lines).toEqual([
@@ -40,6 +42,8 @@ describe("receiptLines", () => {
       "🧾 Stock: Rice now 50 kg",
       "🧾 New customer: Anand",
       "🧾 Customer: Fatima Begum (was Fatima) · phone 9800000002",
+      "💸 Paying Sharma Traders ₹4,200 to UPI su•••@upi · on its way",
+      "💸 Paid Sharma Traders ₹1,500 to UPI su•••@upi · UTR UTR9",
     ]);
   });
 });

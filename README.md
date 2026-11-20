@@ -149,6 +149,29 @@ Supabase setup, once: Authentication → OAuth Server → enable it, set the aut
 
 The supplier tools stay off until `DISTRIBUTOR_URL` points at the wholesaler's agent. In production the wholesaler needs `DISTRIBUTOR_QUOTE_SECRET`, so every instance signs and checks quotes with the same key.
 
+## Paying suppliers (Cashfree Payouts)
+
+"Sharma Traders ko payment kar do" closes the restocking loop: quote, order, pay. Money goes out, so the rules are stricter than for collecting it:
+
+- **Only the owner decides where money goes.** A supplier's UPI ID or bank account is added on the dashboard's Suppliers page, where Cashfree checks it and the owner confirms they checked it with the supplier. The agent has no tool to add or change one, and `paySupplier` re-reads the account from the database instead of trusting what the model passed.
+- **Two steps and a button.** `supplierDues` shows what is owed (unpaid wholesaler orders) and where it would go; only after the owner's yes does the agent call `paySupplier`, which then needs the signed approval button, showing the amount and the masked account taken from the lookup, not from the model's words.
+- **Recorded once, when Cashfree says so.** The transfer is saved before Cashfree is asked, so a fast webhook finds it. `settle_supplier_payout` (one database transaction) writes the `supplier_payment` ledger entry once however often Cashfree reports it, never lets a late failure undo a success, and records a bank sending money back. If Cashfree errors, Munshi asks Cashfree whether the transfer exists before calling it failed, as Cashfree advises. The owner hears on Telegram when it lands, fails or comes back.
+- **Not over MCP.** Collecting money (payment links) is available to MCP hosts; paying it out is not.
+- **Tested:** the tools' rules (`tools.test.ts`), request signing and webhooks (`cashfree-payouts.test.ts`), and in the database, that a payout is recorded once and only by the server (`supabase/tests/payouts.test.sql`).
+
+Setup: Cashfree Payouts is a separate product with its own keys (Payouts → Developers → API Keys), set as `CASHFREE_PAYOUT_CLIENT_ID` and `CASHFREE_PAYOUT_CLIENT_SECRET`. Vercel has no fixed IP, so production uses Cashfree's public-key signature (`CASHFREE_PAYOUT_PUBLIC_KEY`, from Payouts → Developers → Two-Factor Authentication). Add the webhook `https://<app>/api/webhooks/cashfree-payouts` (version V2). In the sandbox, the test UPI ID `success@upi` and Cashfree's test bank accounts succeed or fail on purpose.
+
+## Charts, drawn in a sandbox
+
+"Is mahine ki sale chart mein dikhao" gets a bar chart on Telegram (as a photo) or in the web chat. The agent writes a short Python program (pandas and matplotlib); `makeChart` runs it in a **Vercel Sandbox**, an isolated microVM, and sends the picture.
+
+- **Model-written code never runs in the app.** Each chart starts a fresh sandbox with no network (`networkPolicy: "deny-all"`) and no secrets, gives the program 15 seconds, and stops the sandbox. `charts.test.ts` checks against a real sandbox that it can't reach the internet.
+- **Numbers come from the khata, not the model.** The program reads `ledger.csv` (date in India time, type, amount, customer, note) and `stock.csv`, exported from the shop's own entries, and prints a one-line summary that the reply must use.
+- **Mistakes fix themselves.** A program that fails returns its error to the agent, which corrects it and tries once more.
+- **Fast enough for chat.** The sandbox starts from a snapshot with pandas and matplotlib installed and the font cache warm (`scripts/build-chart-snapshot.mjs`), in Mumbai next to the app: a chart takes about 10 seconds.
+
+Setup: run `node scripts/build-chart-snapshot.mjs` once (from a folder linked with `vercel link`), and set `CHART_SANDBOX_SNAPSHOT` to the id it prints. On Vercel the SDK signs in with the project's OIDC token; the live tests run with `CHART_SANDBOX_LIVE=1`.
+
 ## GST answers with sources (RAG)
 
 "Maggi pe kitna GST hai?" gets "5% (CGST 2.5% + SGST 2.5%), Schedule I, S. No. 119 of Notification 9/2025-Central Tax (Rate)", answered from the official text, never from the model's memory. The rates changed on 22 September 2025, so a model's training data is likely to be wrong.

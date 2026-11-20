@@ -2,6 +2,7 @@ import type { LanguageModelV4 } from "@ai-sdk/provider";
 import type { Language } from "@munshi/db";
 import { isStepCount, type ModelMessage, ToolLoopAgent, type InferAgentUIMessage, wrapLanguageModel } from "ai";
 import { type Channel, type Desk, deskInstructions, deskTools, handedOffTo, handOffTool, justHandedOff, type Route, routeMessage } from "./desks";
+import type { ChartRunner } from "./charts";
 import type { KnowledgeBase } from "./knowledge";
 import type { KhataStore } from "./store";
 import type { SupplierAgent } from "./supplier";
@@ -115,6 +116,8 @@ export type KhataAgentOptions = {
   supplier?: SupplierAgent;
   /** Reference knowledge Munshi answers from with citations (official GST rates). */
   knowledge?: KnowledgeBase;
+  /** Runs chart programs in an isolated sandbox. */
+  charts?: ChartRunner;
 };
 
 const SHOP_FACTS_SHOWN = 12;
@@ -125,7 +128,7 @@ async function shopFactsNote(store: KhataStore) {
   return facts.length ? `What the owner asked you to remember about the shop:\n${facts.map((m) => `- ${m.fact}`).join("\n")}` : null;
 }
 
-export function createKhataAgent({ model, store, shopName, language, approvalSecret, channel, detectLanguage, extraNote, specialists = true, onRoute, supplier, knowledge }: KhataAgentOptions) {
+export function createKhataAgent({ model, store, shopName, language, approvalSecret, channel, detectLanguage, extraNote, specialists = true, onRoute, supplier, knowledge, charts }: KhataAgentOptions) {
   // One lookup per turn for each note; every step of the loop reuses it. Failures aren't fatal.
   let shopFacts: Promise<string | null> | undefined;
   let languageRule: Promise<string | null> | undefined;
@@ -162,10 +165,10 @@ export function createKhataAgent({ model, store, shopName, language, approvalSec
   return new ToolLoopAgent({
     model,
     instructions: deskInstructions("general", shopName, language, channel),
-    tools: { ...createKhataTools(store, shopName, { supplier, knowledge }), handOff: handOffTool },
+    tools: { ...createKhataTools(store, shopName, { supplier, knowledge, charts }), handOff: handOffTool },
     // Money only moves after the owner says yes; approvals are HMAC-signed so a
     // client cannot forge one.
-    toolApproval: { sendPaymentLink: "user-approval", placeSupplierOrder: "user-approval" },
+    toolApproval: { sendPaymentLink: "user-approval", placeSupplierOrder: "user-approval", paySupplier: "user-approval" },
     experimental_toolApprovalSecret: approvalSecret,
     stopWhen: isStepCount(8),
     telemetry: { functionId: "munshi-agent" }, // names the agent's spans in Langfuse when tracing is on

@@ -203,6 +203,21 @@ describe("khata agent loop", () => {
     expect(result.text).toContain("450");
   });
 
+  it("stops for owner approval before paying a supplier", async () => {
+    const store = await seededStore();
+    store.suppliers = [{ id: "sup_1", name: "Sharma Traders", aliases: [], account: "UPI su•••@upi", verified: true }];
+    const agent = createKhataAgent({
+      model: scripted(toolCall("paySupplier", { supplierName: "Sharma Traders", amount: 4200 }), text("Paid.")),
+      store,
+      shopName: "T",
+      language: "en",
+      specialists: false,
+    });
+    const result = await agent.generate({ prompt: "Sharma Traders ko 4200 bhej do" });
+    expect(result.content.some((p) => p.type === "tool-approval-request")).toBe(true);
+    expect(store.payouts).toHaveLength(0);
+  });
+
   it("stops for owner approval before sending a payment link", async () => {
     const store = await seededStore();
     await store.addLedgerEntry({ kind: "credit_given", amountPaise: 43000, customerId: store.customers[0]!.id });
@@ -332,11 +347,14 @@ describe("specialist desks", () => {
       "getStock",
       "handOff",
       "lookupGst",
+      "makeChart",
+      "paySupplier",
       "placeSupplierOrder",
       "recall",
       "recordSale",
       "remember",
       "setReorderLevel",
+      "supplierDues",
       "updateStock",
     ]);
     expect(seen[0]?.instructions).toContain("stock desk");

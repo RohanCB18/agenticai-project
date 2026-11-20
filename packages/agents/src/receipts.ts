@@ -6,7 +6,7 @@ import type { ModelMessage } from "ai";
 export type Action = { tool: string; output: Record<string, unknown> };
 
 /** Statuses a write tool returns only after the change is saved. */
-const DONE = new Set(["added", "recorded", "updated", "sent", "qr_ready", "payment_received", "remembered", "forgotten", "ordered", "alert_set"]);
+const DONE = new Set(["added", "recorded", "updated", "sent", "qr_ready", "payment_received", "remembered", "forgotten", "ordered", "alert_set", "paid", "payout_started"]);
 
 /** Write actions that succeeded in these messages. */
 export function completedActions(messages: ModelMessage[]): Action[] {
@@ -48,6 +48,12 @@ export function receiptLines(actions: Action[]): string[] {
         return ["🧾 Forgotten"];
       case "setReorderLevel":
         return [output.alertAt ? `🧾 Alert: ${s(output.product)} at ${s(output.alertAt)} (now ${s(output.stock)})` : `🧾 Alert removed: ${s(output.product)}`];
+      case "paySupplier":
+        return [
+          output.status === "paid"
+            ? `💸 Paid ${s(output.supplier)} ${s(output.amount)} to ${s(output.to)}${output.utr ? ` · UTR ${s(output.utr)}` : ""}`
+            : `💸 Paying ${s(output.supplier)} ${s(output.amount)} to ${s(output.to)} · on its way`,
+        ];
       case "placeSupplierOrder":
         return [`🚚 Order ${s(output.orderId)} to ${s(output.supplier)}: ${s(output.total)} · delivery ${s(output.deliverySlot)}${output.notSaved ? " · not saved in Munshi" : ""}`];
       case "addCustomer": {

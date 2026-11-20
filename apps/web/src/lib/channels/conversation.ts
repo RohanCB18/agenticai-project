@@ -204,14 +204,27 @@ export async function handleInbound(inbound: Inbound, sender: ChannelSender) {
     if (qr) await sender.sendPhoto(chatId, Uint8Array.from(Buffer.from(qr.qr_png, "base64")), `${out.customer ?? "Customer"}: ${out.amount ?? ""}. Scan with any UPI app.`);
   }
 
+  // Charts go out as pictures, before the reply that describes them.
+  for (const output of toolOutputs(responseMessages, "makeChart")) {
+    const out = output as { status?: string; chartId?: string; title?: string };
+    if (out.status !== "chart_ready" || !out.chartId) continue;
+    const { data: chart } = await admin.from("charts").select("png_base64").eq("id", out.chartId).eq("merchant_id", merchant.id).single();
+    if (chart) await sender.sendPhoto(chatId, Uint8Array.from(Buffer.from(chart.png_base64, "base64")), `📊 ${out.title ?? "Chart"}`);
+  }
+
   if (reply) {
     await sender.sendText(chatId, reply, buttons);
     // Speak the answer only: receipts and links are for reading.
     if (replyLanguage && text) await speakReply(sender, chatId, text, replyLanguage);
   }
   for (const approval of pendingApprovals(messages)) {
-    const supplierOrder = approval.toolName === "placeSupplierOrder";
-    await sender.sendApproval(chatId, approvalPrompt(approval, messages), approval.approvalId, supplierOrder ? { yes: "✅ Haan, order karo", no: "❌ Nahi" } : undefined);
+    const labels =
+      approval.toolName === "placeSupplierOrder"
+        ? { yes: "✅ Haan, order karo", no: "❌ Nahi" }
+        : approval.toolName === "paySupplier"
+          ? { yes: "✅ Haan, pay karo", no: "❌ Nahi" }
+          : undefined;
+    await sender.sendApproval(chatId, approvalPrompt(approval, messages), approval.approvalId, labels);
   }
 }
 
@@ -293,6 +306,13 @@ function approvalPrompt(approval: PendingApproval, messages: ModelMessage[]) {
     const supplier = (toolOutputs(messages, "askSupplierQuote").at(-1) as { supplier?: string } | undefined)?.supplier ?? "the wholesaler";
     if (!quote) return `🔐 Needs your OK\n\nOrder the latest quote from ${supplier}?`;
     return [`🔐 Needs your OK`, "", `Order from ${supplier}:`, ...quoteLines(quote.lines), "", `Total ${quote.total}`, `Delivery ${quote.deliverySlot}, pay on delivery`].join("\n");
+  }
+  if (approval.toolName === "paySupplier") {
+    const { supplierName, amount } = (approval.input ?? {}) as { supplierName?: string; amount?: number };
+    // Where the money goes, from the supplierDues lookup (the owner's saved account), never from the model's words.
+    const dues = toolOutputs(messages, "supplierDues").at(-1) as { supplier?: string; payTo?: string } | undefined;
+    const to = dues?.payTo && dues.supplier?.toLowerCase() === supplierName?.toLowerCase() ? ` to ${dues.payTo}` : "";
+    return `🔐 Needs your OK\n\nPay ${supplierName ?? "the supplier"} ${amount ? formatINR(rupeesToPaise(amount)) : ""}${to} from your Cashfree balance?`;
   }
   if (approval.toolName === "sendPaymentLink") {
     const { customerName, amount } = (approval.input ?? {}) as { customerName?: string; amount?: number };

@@ -50,6 +50,9 @@ async function Books() {
           <h1 className="font-display text-3xl font-semibold">{merchant.shopName}</h1>
         </div>
         <div className="flex items-center gap-4">
+          <Link href="/dashboard/suppliers" className="text-sm text-muted underline-offset-4 hover:underline">
+            Suppliers
+          </Link>
           <Link href="/chat" className="rounded-md bg-accent px-4 py-2 font-medium text-on-accent">
             Talk to Munshi
           </Link>

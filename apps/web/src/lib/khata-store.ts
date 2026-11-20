@@ -1,9 +1,11 @@
 import "server-only";
-import type { Balance, Customer, KhataStore, LedgerEntry, PaymentLink, Product } from "@munshi/agents";
+import type { Balance, Customer, KhataStore, LedgerEntry, PaymentLink, Product, Supplier, SupplierPayout } from "@munshi/agents";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { cashfreeSendsSms, createPaymentLink as createCashfreeLink, createUpiQr } from "@/lib/cashfree";
+import { createTransfer, getTransfer, maskedAccount, payoutStatus, type Transfer } from "@/lib/cashfree-payouts";
 import { cancelOpenRequests, reconcilePayments } from "@/lib/payments";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { settlePayout } from "@/lib/supplier-payouts";
 
 const LINK_TTL_MS = 3 * 24 * 60 * 60 * 1000; // udhaar links stay valid for 3 days
 const QR_TTL_MS = 20 * 60 * 1000; // a counter QR only needs to last while the customer is there
@@ -296,6 +298,170 @@ export function createSupabaseKhataStore(db: SupabaseClient, merchantId: string,
       if (error) throw new Error(`Save supplier order failed: ${error.message}`);
       await store.audit("supplier_order_placed", { supplier: order.supplier, orderId: order.orderId, totalPaise: order.totalPaise });
     },
+
+    async saveChart({ title, png }) {
+      // Charts are written by the server only (RLS gives owners read access).
+      const row = must(
+        await createAdminClient()
+          .from("charts")
+          .insert({ merchant_id: merchantId, title: title.slice(0, 120), png_base64: Buffer.from(png).toString("base64") })
+          .select("id")
+          .single(),
+        "Save chart",
+      ) as { id: string };
+      return { id: row.id };
+    },
+
+    async listSuppliers() {
+      const rows = must(
+        await db
+          .from("suppliers")
+          .select("id, name, payout_vpa, payout_account_last4, cashfree_beneficiary_id, beneficiary_verified")
+          .eq("merchant_id", merchantId)
+          .order("name"),
+        "List suppliers",
+      ) as SupplierRow[];
+      return rows.map(toSupplier);
+    },
+
+    async unpaidSupplierOrders(supplierName) {
+      // Wholesalers name themselves on orders; match that name exactly, ignoring case.
+      const exact = supplierName.replace(/[\\%_]/g, (c) => `\\${c}`);
+      const orders = must(
+        await db
+          .from("supplier_orders")
+          .select("id, order_ref, total_paise, created_at")
+          .eq("merchant_id", merchantId)
+          .ilike("supplier", exact)
+          .neq("status", "cancelled")
+          .order("created_at", { ascending: false })
+          .limit(20),
+        "List supplier orders",
+      ) as { id: string; order_ref: string; total_paise: number | string; created_at: string }[];
+      if (orders.length === 0) return [];
+      const { data: paying, error } = await db
+        .from("supplier_payouts")
+        .select("supplier_order_id")
+        .eq("merchant_id", merchantId)
+        .in("status", ["pending", "success"])
+        .in(
+          "supplier_order_id",
+          orders.map((o) => o.id),
+        );
+      if (error) throw new Error(`Read supplier payouts failed: ${error.message}`);
+      const paid = new Set((paying ?? []).map((p) => p.supplier_order_id as string));
+      return orders.filter((o) => !paid.has(o.id)).map((o) => ({ id: o.id, orderRef: o.order_ref, totalPaise: Number(o.total_paise), createdAt: o.created_at }));
+    },
+
+    async paySupplier({ supplier, amountPaise, supplierOrderId }): Promise<SupplierPayout> {
+      // Checked again from the database: where money goes is never taken from the caller's copy.
+      const row = must(
+        await db
+          .from("suppliers")
+          .select("id, name, payout_vpa, payout_account_last4, cashfree_beneficiary_id, beneficiary_verified")
+          .eq("id", supplier.id)
+          .eq("merchant_id", merchantId)
+          .single(),
+        "Read supplier",
+      ) as SupplierRow;
+      if (!row.beneficiary_verified || !row.cashfree_beneficiary_id) throw new Error("This supplier has no verified payout account");
+
+      // The owner approved in chat (signed AI SDK approval); keep that decision in the audit trail too.
+      const approval = must(
+        await db
+          .from("approvals")
+          .insert({
+            merchant_id: merchantId,
+            action: "supplier_payout",
+            summary: `Pay ₹${amountPaise / 100} to ${row.name}`,
+            payload: { supplierId: row.id, amountPaise, supplierOrderId: supplierOrderId ?? null },
+            amount_paise: amountPaise,
+            requested_by: actor,
+            trace_id: opts.traceId,
+          })
+          .select("id")
+          .single(),
+        "Record approval",
+      ) as { id: string };
+      must(
+        await db.from("approvals").update({ status: "approved", decided_at: new Date().toISOString() }).eq("id", approval.id).eq("merchant_id", merchantId).select("id").single(),
+        "Approve",
+      );
+
+      // Saved before Cashfree is asked, so a webhook that races the answer finds it.
+      const admin = createAdminClient();
+      const transferId = `munshi_${crypto.randomUUID().replaceAll("-", "")}`; // 39 characters; Cashfree allows 40
+      const mode = row.payout_vpa ? ("upi" as const) : ("banktransfer" as const);
+      const payout = must(
+        await admin
+          .from("supplier_payouts")
+          .insert({
+            merchant_id: merchantId,
+            supplier_id: row.id,
+            supplier_order_id: supplierOrderId ?? null,
+            approval_id: approval.id,
+            transfer_id: transferId,
+            amount_paise: amountPaise,
+            mode,
+          })
+          .select("id")
+          .single(),
+        "Save payout",
+      ) as { id: string };
+
+      let transfer: Transfer;
+      try {
+        transfer = await createTransfer({ transferId, amountPaise, beneficiaryId: row.cashfree_beneficiary_id, mode, remarks: "Payment from Munshi" });
+      } catch (error) {
+        // Cashfree's advice: after an error, ask before calling it failed, in case it went through.
+        let known: Transfer | "not_found" | "unknown";
+        try {
+          known = await getTransfer(transferId);
+        } catch (lookup) {
+          known = lookup instanceof Error && /\(404\)/.test(lookup.message) ? "not_found" : "unknown";
+        }
+        if (known === "not_found") {
+          await settlePayout(admin, { transferId, status: "failed", statusCode: null, description: "Not accepted by Cashfree", utr: null, cfTransferId: null });
+          await admin.from("approvals").update({ status: "failed" }).eq("id", approval.id);
+          throw error;
+        }
+        if (known === "unknown") {
+          // Cashfree couldn't say either way: leave it open for the webhook to settle.
+          await admin.from("approvals").update({ status: "executed" }).eq("id", approval.id);
+          return { id: payout.id, status: "pending", amountPaise, utr: null, reason: "Cashfree hasn't confirmed it yet" };
+        }
+        transfer = known;
+      }
+
+      const status = payoutStatus(transfer.status);
+      const settled = await settlePayout(admin, {
+        transferId,
+        status,
+        statusCode: transfer.status_code ?? null,
+        description: transfer.status_description ?? null,
+        utr: transfer.transfer_utr || null,
+        cfTransferId: transfer.cf_transfer_id === undefined ? null : String(transfer.cf_transfer_id),
+      });
+      await admin.from("approvals").update({ status: status === "failed" ? "failed" : "executed" }).eq("id", approval.id);
+      return { id: payout.id, status: settled?.status ?? status, amountPaise, utr: transfer.transfer_utr || null, reason: transfer.status_description ?? null };
+    },
   };
   return store;
 }
+
+type SupplierRow = {
+  id: string;
+  name: string;
+  payout_vpa: string | null;
+  payout_account_last4: string | null;
+  cashfree_beneficiary_id: string | null;
+  beneficiary_verified: boolean;
+};
+
+const toSupplier = (r: SupplierRow): Supplier => ({
+  id: r.id,
+  name: r.name,
+  aliases: [],
+  account: r.cashfree_beneficiary_id ? maskedAccount(r) : null,
+  verified: r.beneficiary_verified && Boolean(r.cashfree_beneficiary_id),
+});

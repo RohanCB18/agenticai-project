@@ -1,4 +1,4 @@
-import type { Balance, Customer, KhataStore, LedgerEntry, Memory, PaymentCheck, PaymentLink, PaymentQr, Product } from "../store";
+import type { Balance, Customer, KhataStore, LedgerEntry, Memory, PaymentCheck, PaymentLink, PaymentQr, Product, Supplier, SupplierPayout } from "../store";
 import type { SupplierOrder } from "../supplier";
 
 /** In-memory KhataStore for tests and evals. Mirrors the Supabase semantics. */
@@ -140,5 +140,46 @@ export class MemoryStore implements KhataStore {
 
   async saveSupplierOrder(order: SupplierOrder & { quoteId: string }) {
     if (!this.supplierOrders.some((o) => o.supplier === order.supplier && o.orderId === order.orderId)) this.supplierOrders.push(order);
+  }
+
+  suppliers: Supplier[] = [];
+  payouts: (SupplierPayout & { supplierId: string; supplierOrderId?: string })[] = [];
+  /** What Cashfree reports when a payout starts; tests set "success" or "failed". */
+  payoutStatus: SupplierPayout["status"] = "pending";
+  payoutFails = false;
+
+  async listSuppliers() {
+    return this.suppliers;
+  }
+
+  async unpaidSupplierOrders(supplierName: string) {
+    const paying = new Set(this.payouts.filter((p) => p.status === "pending" || p.status === "success").map((p) => p.supplierOrderId));
+    return this.supplierOrders
+      .filter((o) => o.supplier.toLowerCase() === supplierName.toLowerCase() && !paying.has(o.orderId))
+      .map((o) => ({ id: o.orderId, orderRef: o.orderId, totalPaise: o.totalPaise, createdAt: new Date().toISOString() }))
+      .reverse();
+  }
+
+  charts: { id: string; title: string; png: Uint8Array }[] = [];
+
+  async saveChart({ title, png }: { title: string; png: Uint8Array }) {
+    const chart = { id: this.id("chart"), title, png };
+    this.charts.push(chart);
+    return { id: chart.id };
+  }
+
+  async paySupplier({ supplier, amountPaise, supplierOrderId }: Parameters<KhataStore["paySupplier"]>[0]) {
+    if (this.payoutFails) throw new Error("Cashfree Payouts transfer didn't answer within 15 s");
+    const payout = {
+      id: this.id("pay"),
+      supplierId: supplier.id,
+      supplierOrderId,
+      status: this.payoutStatus,
+      amountPaise,
+      utr: this.payoutStatus === "success" ? "UTR123" : null,
+      reason: this.payoutStatus === "failed" ? "Invalid beneficiary account" : null,
+    };
+    this.payouts.push(payout);
+    return payout;
   }
 }

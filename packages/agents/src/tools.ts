@@ -1,12 +1,13 @@
 import { formatINR, Language, rupeesToPaise } from "@munshi/db";
 import { type ModelMessage, tool } from "ai";
 import { z } from "zod";
+import { CHART_CODE_GUIDE, type ChartRunner, chartFiles } from "./charts";
 import { paymentHabits } from "./habits";
 import type { GstPassage, KnowledgeBase } from "./knowledge";
 import { ownerWasAskedAboutRepeat } from "./threads";
 import { rankByName } from "./match";
 import { rankProducts, tooClose } from "./staples";
-import type { Customer, KhataStore } from "./store";
+import type { Customer, KhataStore, Supplier } from "./store";
 import { latestQuoteId, type QuoteRequestItem, readQuote, SupplierError, type SupplierAgent } from "./supplier";
 
 const Rupees = z
@@ -97,6 +98,8 @@ export type KhataToolOptions = {
   supplier?: SupplierAgent;
   /** Reference knowledge (official GST rates). Without it, lookupGst says so. */
   knowledge?: KnowledgeBase;
+  /** Runs chart programs in a sandbox. Without it, makeChart says charts are off. */
+  charts?: ChartRunner;
 };
 
 const LEDGER_LABELS: Record<string, string> = { credit_given: "udhaar", payment_received: "payment" };
@@ -120,6 +123,22 @@ function gstEntry(p: GstPassage) {
   };
 }
 
+// Where a supplier's account comes from: only the owner, in the dashboard. Said whenever one is missing.
+const ADD_ACCOUNT_HINT =
+  "Munshi can't add or change where money goes. Tell the owner to add the supplier's UPI ID or bank account in Munshi's dashboard (Suppliers), confirm it with the supplier, and then ask again.";
+
+type ResolvedSupplier = { ok: true; supplier: Supplier } | { ok: false; result: Record<string, unknown> };
+
+async function resolveSupplier(store: KhataStore, name: string): Promise<ResolvedSupplier> {
+  const matches = rankByName(name, await store.listSuppliers());
+  const [best, second] = matches;
+  if (!best) return { ok: false, result: { status: "no_payout_account", supplier: name, hint: ADD_ACCOUNT_HINT } };
+  if (second && best.score - second.score < 0.1 && best.score < 1) {
+    return { ok: false, result: { status: "ambiguous_supplier", name, candidates: matches.slice(0, 3).map((m) => m.item.name), hint: "Ask the owner which one they meant." } };
+  }
+  return { ok: true, supplier: best.item };
+}
+
 const NO_SUPPLIER = { status: "no_supplier", hint: "Tell the owner no wholesaler is connected to Munshi yet." };
 
 function supplierDown(name: string, error: unknown) {
@@ -130,7 +149,7 @@ function supplierDown(name: string, error: unknown) {
 
 export function createKhataTools(store: KhataStore, shopName = "your shop", options: KhataToolOptions = {}) {
   const repeatConfirmed = options.repeatConfirmed ?? ownerWasAskedAboutRepeat;
-  const { supplier, knowledge } = options;
+  const { supplier, knowledge, charts } = options;
   return {
     findCustomer: tool({
       description: "Look up customers by a spoken or typed name, including nicknames and names in Indian scripts.",
@@ -591,6 +610,110 @@ export function createKhataTools(store: KhataStore, shopName = "your shop", opti
           item,
           entries: passages.map(gstEntry),
           hint: "Answer only from these entries: the total GST first, then the notification and S. No. it comes from. If loose and packed goods differ, give both. If no entry clearly covers the item, say you aren't sure and suggest checking with their CA. Never give a rate that isn't here.",
+        };
+      },
+    }),
+
+    supplierDues: tool({
+      description:
+        "What the shop owes a supplier or wholesaler (their orders not yet paid) and where a payment would go. Call before paySupplier and tell the owner the amount and the account.",
+      inputSchema: z.object({ supplierName: z.string() }),
+      execute: async ({ supplierName }) => {
+        const r = await resolveSupplier(store, supplierName);
+        const name = r.ok ? r.supplier.name : supplierName;
+        const orders = await store.unpaidSupplierOrders(name);
+        const due = orders.reduce((sum, o) => sum + o.totalPaise, 0);
+        const unpaid = orders.slice(0, 5).map((o) => ({ orderId: o.orderRef, amount: formatINR(o.totalPaise), date: o.createdAt.slice(0, 10) }));
+        if (!r.ok) return { ...r.result, unpaidOrders: unpaid, totalDue: formatINR(due) };
+        if (!r.supplier.account || !r.supplier.verified) {
+          return { status: "no_payout_account", supplier: name, unpaidOrders: unpaid, totalDue: formatINR(due), hint: ADD_ACCOUNT_HINT };
+        }
+        return {
+          status: "dues",
+          supplier: name,
+          payTo: r.supplier.account,
+          unpaidOrders: unpaid,
+          totalDue: formatINR(due),
+          hint: "Tell the owner what is due and where it would go, and ask whether to pay. Only if they say yes, call paySupplier with the amount.",
+        };
+      },
+    }),
+
+    paySupplier: tool({
+      description:
+        "Pay a supplier or wholesaler from the shop's Cashfree balance, to the UPI ID or bank account the owner added and confirmed in Munshi's dashboard. Moves real money, so call it only after supplierDues and the owner's yes; the owner then approves it with a button.",
+      inputSchema: z.object({ supplierName: z.string(), amount: Rupees }),
+      execute: async ({ supplierName, amount }) => {
+        const r = await resolveSupplier(store, supplierName);
+        if (!r.ok) return r.result;
+        if (!r.supplier.account || !r.supplier.verified) return { status: "no_payout_account", supplier: r.supplier.name, hint: ADD_ACCOUNT_HINT };
+        const amountPaise = rupeesToPaise(amount);
+        // An order of exactly this amount is the one being paid, so it stops showing as due.
+        const order = (await store.unpaidSupplierOrders(r.supplier.name)).find((o) => o.totalPaise === amountPaise);
+
+        let payout;
+        try {
+          payout = await store.paySupplier({ supplier: r.supplier, amountPaise, supplierOrderId: order?.id });
+        } catch (error) {
+          console.error("[munshi] supplier payout failed:", error instanceof Error ? error.message : error);
+          return {
+            status: "payout_failed",
+            supplier: r.supplier.name,
+            amount: formatINR(amountPaise),
+            hint: "The payment was NOT made (the payment service didn't take it). Tell the owner nothing left their account and to try again later.",
+          };
+        }
+        await store.audit("supplier_payout", { supplierId: r.supplier.id, payoutId: payout.id, amountPaise, status: payout.status });
+        const base = { supplier: r.supplier.name, amount: formatINR(amountPaise), to: r.supplier.account, ...(order ? { forOrder: order.orderRef } : {}) };
+        if (payout.status === "success") return { status: "paid", ...base, utr: payout.utr };
+        if (payout.status === "failed") {
+          return { status: "payout_failed", ...base, reason: payout.reason, hint: "Tell the owner the payment failed and nothing left their account." };
+        }
+        return {
+          status: "payout_started",
+          ...base,
+          hint: "The bank transfer has started. Tell the owner it is on its way and that Munshi will message them when it reaches the supplier. Never say it has reached them.",
+        };
+      },
+    }),
+
+    makeChart: tool({
+      description:
+        "Draw a chart of the shop's own numbers (sales, udhaar, payments, expenses, stock) for 'is mahine ki sale chart mein dikhao' or 'udhaar ka graph'. You write a short Python program; it runs in an isolated sandbox over the khata's data and the picture is sent to the owner.",
+      inputSchema: z.object({
+        title: z.string().min(3).max(80).describe("The chart's title, in English"),
+        days: z.number().int().min(1).max(366).default(30).describe("How many days of the khata the program gets: 7 for a week, 30 for a month"),
+        code: z.string().min(20).max(6000).describe(CHART_CODE_GUIDE),
+      }),
+      execute: async ({ title, days, code }) => {
+        if (!charts) return { status: "charts_off", hint: "Tell the owner charts aren't set up in Munshi yet." };
+        const [entries, customers, products] = await Promise.all([store.recentEntries(2000, undefined), store.listCustomers(), store.listProducts()]);
+        const { files, ledgerRows } = chartFiles(entries, customers, products, days);
+        if (ledgerRows === 0 && products.length === 0) return { status: "no_data", days, hint: "Tell the owner there are no entries to chart yet." };
+
+        let result;
+        try {
+          result = await charts.run({ code, files });
+        } catch (error) {
+          console.error("[munshi] chart sandbox failed:", error instanceof Error ? error.message : error);
+          return { status: "chart_unavailable", hint: "The chart service didn't respond. Tell the owner to try again in a minute." };
+        }
+        if (!result.ok) {
+          return {
+            status: "chart_error",
+            error: result.error,
+            hint: "The program failed. Fix it and call makeChart again; if it fails twice, tell the owner the chart couldn't be made.",
+          };
+        }
+        const chart = await store.saveChart({ title, png: result.png });
+        return {
+          status: "chart_ready",
+          chartId: chart.id,
+          title,
+          days,
+          entries: ledgerRows,
+          summary: result.stdout,
+          hint: "The chart is shown to the owner. Reply in one short sentence using only the numbers in summary.",
         };
       },
     }),

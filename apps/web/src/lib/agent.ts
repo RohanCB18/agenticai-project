@@ -3,6 +3,7 @@ import { type Channel, createKhataAgent, detectLanguage, resolveModel, type Rout
 import type { Language } from "@munshi/db";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { createSupabaseKhataStore } from "@/lib/khata-store";
+import { configuredChartRunner } from "@/lib/charts";
 import { configuredKnowledge } from "@/lib/knowledge";
 import { configuredSupplier } from "@/lib/supplier";
 
@@ -58,5 +59,7 @@ export function buildKhataAgent(opts: {
     supplier: configuredSupplier(),
     // Official GST rates to answer from, when SUPABASE_EMBED_KEY is set.
     knowledge: configuredKnowledge(),
+    // Charts drawn in a Vercel Sandbox, when CHART_SANDBOX_SNAPSHOT is set.
+    charts: configuredChartRunner(),
   });
 }
