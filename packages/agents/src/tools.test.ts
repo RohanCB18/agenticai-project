@@ -394,3 +394,20 @@ describe("makeChart", () => {
     expect(await charted.makeChart.execute!({ title: "Sales", days: 7, code }, ctx)).toMatchObject({ status: "no_data" });
   });
 });
+
+describe("checkGstPortal", () => {
+  it("starts a background lookup and says the answer will follow", async () => {
+    const started: string[] = [];
+    const portaled = createKhataTools(store, "S", { portal: { start: async (q) => void started.push(q) } });
+    expect(await portaled.checkGstPortal.execute!({ question: "What is the HSN code for makhana?" }, ctx)).toMatchObject({ status: "checking_portal" });
+    expect(started).toEqual(["What is the HSN code for makhana?"]);
+  });
+
+  it("says when browsing is off or can't start", async () => {
+    expect(await tools.checkGstPortal.execute!({ question: "HSN for makhana?" }, ctx)).toMatchObject({ status: "browsing_off" });
+    const broken = createKhataTools(store, "S", { portal: { start: async () => Promise.reject(new Error("queue down")) } });
+    const quiet = vi.spyOn(console, "error").mockImplementation(() => {});
+    expect(await broken.checkGstPortal.execute!({ question: "HSN for makhana?" }, ctx)).toMatchObject({ status: "portal_unavailable" });
+    quiet.mockRestore();
+  });
+});

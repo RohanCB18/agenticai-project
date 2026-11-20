@@ -3,7 +3,10 @@ import { type Channel, createKhataAgent, detectLanguage, resolveModel, type Rout
 import type { Language } from "@munshi/db";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { createSupabaseKhataStore } from "@/lib/khata-store";
+import { start } from "workflow/api";
+import { browserConfigured } from "@/lib/browser";
 import { configuredChartRunner } from "@/lib/charts";
+import { gstPortalLookup } from "@/workflows/gst-portal";
 import { configuredKnowledge } from "@/lib/knowledge";
 import { configuredSupplier } from "@/lib/supplier";
 
@@ -61,5 +64,13 @@ export function buildKhataAgent(opts: {
     knowledge: configuredKnowledge(),
     // Charts drawn in a Vercel Sandbox, when CHART_SANDBOX_SNAPSHOT is set.
     charts: configuredChartRunner(),
+    // GST portal lookups in a sandboxed browser, run as a background workflow.
+    portal: browserConfigured()
+      ? {
+          start: async (question: string) => {
+            await start(gstPortalLookup, [{ merchantId: opts.merchant.id, question }]);
+          },
+        }
+      : undefined,
   });
 }

@@ -172,6 +172,17 @@ Setup: Cashfree Payouts is a separate product with its own keys (Payouts → Dev
 
 Setup: run `node scripts/build-chart-snapshot.mjs` once (from a folder linked with `vercel link`), and set `CHART_SANDBOX_SNAPSHOT` to the id it prints. On Vercel the SDK signs in with the project's OIDC token; the live tests run with `CHART_SANDBOX_LIVE=1`.
 
+## Browser use: the official GST portal
+
+"Makhana ka HSN code kya hai?" is not in the notifications Munshi has indexed, so `checkGstPortal` asks a browser agent to look it up on the GST portal's public HSN search. It answers in the chat at once ("checking the portal"); a background workflow (`workflows/gst-portal.ts`) browses, keeps the result in the audit log, and messages the owner what the portal showed, with the page it came from. Measured: about 35 seconds in 5 steps.
+
+- **Sarvam drives a real browser.** Playwright MCP runs headless Chromium and describes each page as an accessibility outline (text, with element refs), so a text-only model can click and type. The agent gets a few plain tools (`open`, `click`, `type` key by key so the site's suggestions appear, `choose`, `pressKey`, `back`, `finish`), not Playwright's full list, so it can't run scripts or upload files; older page outlines are dropped from the conversation to keep each call small.
+- **Only official sites, enforced by the network.** The browser runs in a Vercel Sandbox whose network policy reaches only `gst.gov.in` and `cbic-gst.gov.in` (anything else fails to resolve); `isOfficialUrl` checks the same list before a page is opened and before a source is reported. No logins, forms, personal details or CAPTCHAs.
+- **No public port.** Playwright MCP's HTTP endpoint didn't survive the sandbox's public proxy (it cut the streamed replies), and it shouldn't be public anyway. A small bridge inside the sandbox (`sandbox/browser-bridge.mjs`) runs Playwright MCP over stdio and listens on 127.0.0.1; the app reaches it through the sandbox's command channel.
+- **Fast start.** A snapshot holds Ubuntu, Chromium, Playwright MCP and the bridge (`scripts/build-browser-snapshot.mjs`): the sandbox is up in about 2 seconds and the portal open in about 6.
+
+Setup: run `node <path>/scripts/build-browser-snapshot.mjs` from a folder linked with `vercel link`, and set `BROWSER_SANDBOX_SNAPSHOT` to the id it prints (with `SARVAM_API_KEY`). The live test runs with `BROWSER_LIVE=1`.
+
 ## GST answers with sources (RAG)
 
 "Maggi pe kitna GST hai?" gets "5% (CGST 2.5% + SGST 2.5%), Schedule I, S. No. 119 of Notification 9/2025-Central Tax (Rate)", answered from the official text, never from the model's memory. The rates changed on 22 September 2025, so a model's training data is likely to be wrong.

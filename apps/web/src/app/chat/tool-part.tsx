@@ -26,6 +26,7 @@ const LABELS: Record<string, string> = {
   placeSupplierOrder: "Wholesaler order",
   supplierDues: "What you owe the supplier",
   makeChart: "Chart",
+  checkGstPortal: "GST portal",
   paySupplier: "Supplier payment",
   updateCustomer: "Customer updated",
   customerHistory: "Khata history",
@@ -297,6 +298,10 @@ function Output({ name, out }: { name: string; out: Record<string, unknown> }) {
         {out.phone ? ` · phone ${String(out.phone)}` : ""}
       </p>
     );
+  }
+
+  if (name === "checkGstPortal" && out.status === "checking_portal") {
+    return <p>Checking the official GST portal. The answer comes on Telegram in about a minute.</p>;
   }
 
   if (name === "makeChart" && out.status === "chart_ready") {

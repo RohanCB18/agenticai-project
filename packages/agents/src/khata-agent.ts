@@ -118,6 +118,8 @@ export type KhataAgentOptions = {
   knowledge?: KnowledgeBase;
   /** Runs chart programs in an isolated sandbox. */
   charts?: ChartRunner;
+  /** Starts a background lookup on the official GST portal. */
+  portal?: { start(question: string): Promise<void> };
 };
 
 const SHOP_FACTS_SHOWN = 12;
@@ -128,7 +130,7 @@ async function shopFactsNote(store: KhataStore) {
   return facts.length ? `What the owner asked you to remember about the shop:\n${facts.map((m) => `- ${m.fact}`).join("\n")}` : null;
 }
 
-export function createKhataAgent({ model, store, shopName, language, approvalSecret, channel, detectLanguage, extraNote, specialists = true, onRoute, supplier, knowledge, charts }: KhataAgentOptions) {
+export function createKhataAgent({ model, store, shopName, language, approvalSecret, channel, detectLanguage, extraNote, specialists = true, onRoute, supplier, knowledge, charts, portal }: KhataAgentOptions) {
   // One lookup per turn for each note; every step of the loop reuses it. Failures aren't fatal.
   let shopFacts: Promise<string | null> | undefined;
   let languageRule: Promise<string | null> | undefined;
@@ -165,7 +167,7 @@ export function createKhataAgent({ model, store, shopName, language, approvalSec
   return new ToolLoopAgent({
     model,
     instructions: deskInstructions("general", shopName, language, channel),
-    tools: { ...createKhataTools(store, shopName, { supplier, knowledge, charts }), handOff: handOffTool },
+    tools: { ...createKhataTools(store, shopName, { supplier, knowledge, charts, portal }), handOff: handOffTool },
     // Money only moves after the owner says yes; approvals are HMAC-signed so a
     // client cannot forge one.
     toolApproval: { sendPaymentLink: "user-approval", placeSupplierOrder: "user-approval", paySupplier: "user-approval" },

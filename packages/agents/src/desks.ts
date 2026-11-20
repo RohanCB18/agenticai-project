@@ -39,6 +39,7 @@ const ALL_TOOLS: KhataToolName[] = [
   "supplierDues",
   "paySupplier",
   "lookupGst",
+  "checkGstPortal",
   "makeChart",
   ...MEMORY_TOOLS,
 ];
@@ -57,6 +58,7 @@ const RULES = {
   stock: `Stock that arrived ("10 packet Maggi aaya") is updateStock with a positive change; stock sold or used up is a negative change. "Kya khatam ho raha hai?" means getStock. "Rice 10 kg pe alert karna" (tell me when rice is down to 10 kg) means setReorderLevel. Owners name items in their own language (akki, chawal, sakkare): check getStock before deciding a word is a customer's name.`,
   restock: `To restock, askSupplierQuote gets a quote from the wholesaler's agent (omit items to quote everything running low). Tell the owner the items, the total and the delivery slot, and what the wholesaler can't supply. Only after the owner says yes, call placeSupplierOrder; the owner then approves it with a button. Never state a price the quote didn't give.`,
   payout: `To pay a supplier or wholesaler ("Sharma Traders ko payment karo"), call supplierDues and tell the owner what is due and where it would go. Only after the owner says yes, call paySupplier with the amount; the owner then approves it with a button. If there is no verified account, tell the owner to add it in Munshi's dashboard: Munshi can never add or change where money goes. Never say money reached the supplier unless paySupplier returned paid.`,
+  portal: `If lookupGst finds no clear entry for an item, or the owner asks for an item's HSN code, call checkGstPortal: it looks it up on the official GST portal in the background. Tell the owner the answer will come in about a minute, and never guess an HSN code yourself.`,
   chart: `For a chart or graph ("is mahine ki sale chart mein dikhao", "udhaar ka graph"), call makeChart with a short Python program that reads ledger.csv or stock.csv. If it returns chart_error, fix the program and call it again once. The picture goes to the owner by itself: reply with one sentence using only the numbers in its summary.`,
   history: `For what a customer took or paid over a period ("Ramesh ne pichhle mahine kya liya?", "Fatima ne is hafte kitna diya?"), use customerHistory with the number of days (a week is 7, a month is 30). Answer from its entries and notes; never guess what they bought.`,
   customer: `To add or change an existing customer's mobile number ("Fatima ka number 98...") or fix their name, use updateCustomer. addCustomer is only for someone new.`,
@@ -92,8 +94,8 @@ export const SPECIALISTS: Record<Exclude<Desk, "general">, Specialist> = {
   stock: {
     purpose: "stock: what is left, what arrived, what sold, what is running low, reordering from and paying the wholesaler, and the GST on goods",
     // GST questions name a product ("Maggi pe kitna GST?"), so the router often sends them here.
-    tools: ["getStock", "updateStock", "setReorderLevel", "recordSale", "askSupplierQuote", "placeSupplierOrder", "supplierDues", "paySupplier", "lookupGst", "makeChart", ...MEMORY_TOOLS],
-    rules: [RULES.stock, RULES.restock, RULES.payout, RULES.gst, RULES.chart, RULES.memory],
+    tools: ["getStock", "updateStock", "setReorderLevel", "recordSale", "askSupplierQuote", "placeSupplierOrder", "supplierDues", "paySupplier", "lookupGst", "checkGstPortal", "makeChart", ...MEMORY_TOOLS],
+    rules: [RULES.stock, RULES.restock, RULES.payout, RULES.gst, RULES.portal, RULES.chart, RULES.memory],
   },
 };
 
@@ -110,6 +112,7 @@ const GENERAL_RULES = [
   RULES.restock,
   RULES.payout,
   RULES.gst,
+  RULES.portal,
   RULES.chart,
   RULES.memory,
 ];

@@ -100,6 +100,8 @@ export type KhataToolOptions = {
   knowledge?: KnowledgeBase;
   /** Runs chart programs in a sandbox. Without it, makeChart says charts are off. */
   charts?: ChartRunner;
+  /** Starts a lookup on the official GST portal in the background (a browser in a sandbox). */
+  portal?: { start(question: string): Promise<void> };
 };
 
 const LEDGER_LABELS: Record<string, string> = { credit_given: "udhaar", payment_received: "payment" };
@@ -149,7 +151,7 @@ function supplierDown(name: string, error: unknown) {
 
 export function createKhataTools(store: KhataStore, shopName = "your shop", options: KhataToolOptions = {}) {
   const repeatConfirmed = options.repeatConfirmed ?? ownerWasAskedAboutRepeat;
-  const { supplier, knowledge, charts } = options;
+  const { supplier, knowledge, charts, portal } = options;
   return {
     findCustomer: tool({
       description: "Look up customers by a spoken or typed name, including nicknames and names in Indian scripts.",
@@ -673,6 +675,26 @@ export function createKhataTools(store: KhataStore, shopName = "your shop", opti
           status: "payout_started",
           ...base,
           hint: "The bank transfer has started. Tell the owner it is on its way and that Munshi will message them when it reaches the supplier. Never say it has reached them.",
+        };
+      },
+    }),
+
+    checkGstPortal: tool({
+      description:
+        "Look something up on the official GST portal with a web browser, such as an item's HSN code, when lookupGst found no clear entry or the owner asks for an HSN code. It runs in the background for about a minute, and Munshi messages the owner what the portal shows.",
+      inputSchema: z.object({ question: z.string().min(5).max(200).describe("What to find, in English, e.g. 'What is the HSN code for makhana (fox nut)?'") }),
+      execute: async ({ question }) => {
+        if (!portal) return { status: "browsing_off", hint: "Tell the owner Munshi can't check the GST portal yet." };
+        try {
+          await portal.start(question);
+        } catch (error) {
+          console.error("[munshi] couldn't start a GST portal lookup:", error instanceof Error ? error.message : error);
+          return { status: "portal_unavailable", hint: "Tell the owner the GST portal can't be checked right now; try again later." };
+        }
+        return {
+          status: "checking_portal",
+          question,
+          hint: "Tell the owner Munshi is checking the official GST portal and will message what it finds in about a minute. Don't guess the answer.",
         };
       },
     }),

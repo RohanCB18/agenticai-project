@@ -343,6 +343,7 @@ describe("specialist desks", () => {
     expect(routes).toEqual(["stock"]);
     expect(seen[0]?.tools).toEqual([
       "askSupplierQuote",
+      "checkGstPortal",
       "forget",
       "getStock",
       "handOff",
