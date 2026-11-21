@@ -71,6 +71,17 @@ export function sameGoods(a: GstPassage, b: GstPassage) {
   return all > 0 && shared / all >= 0.6;
 }
 
+/**
+ * The HSN code to keep: the one given, unless it is more specific than every official entry that
+ * covers it, then the official one. Live, the agent tagged toor dal "07131000" (the sub-code for
+ * peas) where the notification lists only 0713.
+ */
+export function officialHsn(entries: GstPassage[], code: string): string {
+  const codes = entries.flatMap((entry) => entryHsnCodes(entry.hsn));
+  if (codes.some((c) => c.startsWith(code))) return code;
+  return codes.filter((c) => code.startsWith(c)).sort((a, b) => b.length - a.length)[0] ?? code;
+}
+
 /** One option per distinct official rate among entries, highest first, with the entry that sets it. */
 export function officialRates(entries: GstPassage[]): { rate: number; item: string | null; citation: string | null; url: string | null }[] {
   const byRate = new Map<number, GstPassage>();

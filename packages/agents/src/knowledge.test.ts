@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { type GstPassage, sameGoods, withOfficialWording } from "./knowledge";
+import { type GstPassage, officialHsn, sameGoods, withOfficialWording } from "./knowledge";
 
 const entry = (description: string): GstPassage => ({ id: description, kind: "rate", hsn: "0713", description, gst: 5, content: description, sources: [] });
 
@@ -12,6 +12,22 @@ describe("withOfficialWording", () => {
 
   it("leaves dal flour, other goods and lookalike words alone", () => {
     for (const query of ["besan", "chana dal flour", "moong dal atta", "sugar", "dalchini cinnamon", "biscuits"]) expect(withOfficialWording(query)).toBe(query);
+  });
+});
+
+describe("officialHsn", () => {
+  const dal = { ...entry("Dried leguminous vegetables, shelled, split"), hsn: "0713" };
+  const horses = { ...entry("Live horses"), hsn: "0101 21 00, 0101 29" };
+
+  it("keeps no sub-code finer than the notification lists", () => {
+    // Live: "07131000" (the sub-code for peas) for toor dal, where the notification lists 0713.
+    expect(officialHsn([dal], "07131000")).toBe("0713");
+    expect(officialHsn([dal], "0713")).toBe("0713");
+  });
+
+  it("keeps a code the notification lists, or a heading above one", () => {
+    expect(officialHsn([horses], "01012100")).toBe("01012100");
+    expect(officialHsn([horses], "0101")).toBe("0101");
   });
 });
 

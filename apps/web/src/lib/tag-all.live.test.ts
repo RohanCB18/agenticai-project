@@ -40,4 +40,22 @@ describe.skipIf(!knowledge || !key)("tagging every product at once", () => {
     console.log(tags());
     expect(tags()["Toor dal"]).toBe("0713 5%");
   });
+
+  it("finishes products a bill left with a code and no rate", { timeout: 240_000 }, async () => {
+    // The live shop after a supplier bill: codes on everything, rates only where the bill could tell.
+    const store = new MemoryStore();
+    const product = (name: string, unit: string, hsn: string, gstRate: number | null) =>
+      store.products.push({ id: name, name, aliases: [], unit, stockQty: 10, reorderLevel: null, pricePaise: null, hsn, gstRate, gstCitation: null });
+    product("Parle G", "box", "1905", null);
+    product("Rice", "kg", "1006", 5);
+    product("Sugar", "kg", "1701", null);
+    product("Sunflower oil", "ltr", "1512", 5);
+    product("Toor dal", "kg", "0713", null);
+
+    const agent = createKhataAgent({ model: sarvamModel(key!), store, shopName: "RCB general stores", language: "hi", channel: "app", knowledge });
+    const result = await agent.generate({ messages: [{ role: "user", content: "Baaki sab products ka HSN laga do" }] });
+    console.log(`  receipts: ${receiptLines(completedActions(result.responseMessages)).join(" | ")}\n  reply: ${result.text.trim()}`);
+    const tags = Object.fromEntries(store.products.map((p) => [p.name, p.gstRate == null ? `${p.hsn} ?` : `${p.hsn} ${p.gstRate}%`]));
+    expect(tags).toMatchObject({ "Parle G": "1905 5%", Sugar: "1701 5%", "Toor dal": "0713 ?" });
+  });
 });

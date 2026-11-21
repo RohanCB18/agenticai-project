@@ -14,7 +14,7 @@ import {
   salesChartSkipsUdhaar,
 } from "./charts";
 import { paymentHabits } from "./habits";
-import { coversHsn, type GstPassage, gstCitation, type KnowledgeBase, officialRates, sameGoods } from "./knowledge";
+import { coversHsn, type GstPassage, gstCitation, type KnowledgeBase, officialHsn, officialRates, sameGoods } from "./knowledge";
 import { ownerWasAskedAboutRepeat } from "./threads";
 import { rankByName } from "./match";
 import { rankProducts, tooClose } from "./staples";
@@ -175,33 +175,42 @@ async function tagOneProduct(store: KhataStore, knowledge: KnowledgeBase, produc
   const [match] = matches;
   if (!match || tooClose(matches)) return { kind: "not_found", productName: item.productName };
   const product = match.item.name;
-  if (match.item.hsn) return { kind: "already_tagged", product };
+  // A code with no rate yet (a bill gave the code, the official entries differ) still needs one.
+  if (match.item.hsn && match.item.gstRate != null) return { kind: "already_tagged", product };
 
   const code = item.hsn.replace(/\s/g, "");
   let found: GstPassage[];
+  let byName: GstPassage[];
   let forCode: GstPassage[];
   try {
-    [found, forCode] = await Promise.all([knowledge.searchGst(item.goods, 8), knowledge.searchGst(`${code} ${item.goods}`, 10)]);
+    [found, byName, forCode] = await Promise.all([
+      knowledge.searchGst(item.goods, 8),
+      knowledge.searchGst(`${product} ${item.goods}`, 8),
+      knowledge.searchGst(`${code} ${item.goods}`, 10),
+    ]);
   } catch (error) {
     console.error("[munshi] GST lookup failed:", error instanceof Error ? error.message : error);
     return { kind: "unavailable", product };
   }
   // The best official entry for the goods must carry the code. Live, with any of the top five
-  // allowed, "pulses split" confirmed 1106 (dal flour) for toor dal.
-  const top = found.find((entry) => entry.gst !== null);
-  const confirmed = top && coversHsn(top, code) ? top : undefined;
+  // allowed, "pulses split" confirmed 1106 (dal flour) for toor dal. The goods are also searched
+  // with the product's own name: live, "vegetable oil" alone missed sunflower oil (1512).
+  const confirmed = [found, byName]
+    .map((list) => list.find((entry) => entry.gst !== null))
+    .find((top) => top !== undefined && coversHsn(top, code));
   if (!confirmed) {
     return { kind: "unconfirmed", product, hsn: code, goods: item.goods, officialFor: found.slice(0, 3).map((e) => ({ hsn: e.hsn, item: e.description })) };
   }
   const seen = new Set<string>();
-  const twins = [confirmed, ...found, ...forCode].filter((e) => !seen.has(e.id) && (seen.add(e.id), coversHsn(e, code) && sameGoods(e, confirmed)));
+  const twins = [confirmed, ...found, ...byName, ...forCode].filter((e) => !seen.has(e.id) && (seen.add(e.id), coversHsn(e, code) && sameGoods(e, confirmed)));
   const rates = officialRates(twins);
+  const kept = officialHsn(twins, code); // no sub-code finer than the notification lists
   if (rates.length > 1) {
-    return { kind: "choose_rate", product, hsn: code, options: rates.map((r) => ({ gst: `${r.rate}%`, gstRate: r.rate, item: r.item, citation: r.citation })) };
+    return { kind: "choose_rate", product, hsn: kept, options: rates.map((r) => ({ gst: `${r.rate}%`, gstRate: r.rate, item: r.item, citation: r.citation })) };
   }
   const [rate] = rates;
-  const saved = await store.setProductGst(match.item.id, { hsn: code, gstRate: rate!.rate, citation: rate!.citation });
-  return { kind: "tagged", product: saved.name, hsn: code, gst: `${rate!.rate}%`, citation: rate!.citation };
+  const saved = await store.setProductGst(match.item.id, { hsn: kept, gstRate: rate!.rate, citation: rate!.citation });
+  return { kind: "tagged", product: saved.name, hsn: kept, gst: `${rate!.rate}%`, citation: rate!.citation };
 }
 
 function supplierDown(name: string, error: unknown) {
@@ -544,7 +553,7 @@ export function createKhataTools(store: KhataStore, shopName = "your shop", opti
         if (!match) return { status: "product_not_found", productName };
         if (tooClose(matches)) return { status: "ambiguous_product", candidates: matches.slice(0, 3).map((m) => m.item.name), hint: "Ask the owner which product." };
 
-        const code = hsn.replace(/\s/g, "");
+        let code = hsn.replace(/\s/g, "");
         let entries: GstPassage[];
         try {
           entries = await knowledge.searchGst(`${code} ${match.item.name}`, 10);
@@ -552,11 +561,13 @@ export function createKhataTools(store: KhataStore, shopName = "your shop", opti
           console.error("[munshi] GST lookup failed:", error instanceof Error ? error.message : error);
           return { status: "knowledge_unavailable", hint: "The GST lookup didn't answer. Tell the owner to try again in a minute." };
         }
-        const rates = officialRates(entries.filter((entry) => coversHsn(entry, code)));
+        const covering = entries.filter((entry) => coversHsn(entry, code));
+        const rates = officialRates(covering);
         const options = rates.map((r) => ({ gst: `${r.rate}%`, gstRate: r.rate, item: r.item, citation: r.citation }));
         if (rates.length === 0) {
           return { status: "not_found", hsn: code, hint: "No official entry has this HSN code. Check it with lookupGst or the supplier's bill. Nothing was saved." };
         }
+        code = officialHsn(covering, code); // no sub-code finer than the notification lists
         const chosen = gstRate === undefined ? (rates.length === 1 ? rates[0] : undefined) : rates.find((r) => Math.abs(r.rate - gstRate) < 0.001);
         if (gstRate !== undefined && !chosen) {
           return { status: "rate_not_official", product: match.item.name, hsn: code, options, hint: "That rate isn't an official rate for this code. Nothing was saved. Use one of these." };
@@ -592,7 +603,8 @@ export function createKhataTools(store: KhataStore, shopName = "your shop", opti
       }),
       execute: async ({ products: asked }) => {
         const all = await store.listProducts();
-        const untagged = all.filter((p) => !p.hsn);
+        // Live, a bill left Parle-G, sugar and toor dal with a code and no rate, and nothing could finish them.
+        const untagged = all.filter((p) => !p.hsn || p.gstRate == null);
         if (all.length === 0) {
           // Live, a new shop with no products was told "every product is tagged".
           return { status: "no_products", hint: "Tell the owner Munshi has no products for this shop yet, so there is nothing to tag. They can add one: 'Maggi naya product hai, 20 packet'." };
@@ -603,7 +615,8 @@ export function createKhataTools(store: KhataStore, shopName = "your shop", opti
           return {
             status: "untagged_products",
             products: untagged.map((p) => p.name),
-            hint: "Nothing is tagged yet. Call tagAllProducts again with every one of these: its usual HSN code and a generic English description of the goods.",
+            ...(untagged.some((p) => p.hsn) ? { codeButNoRate: untagged.filter((p) => p.hsn).map((p) => ({ product: p.name, hsn: p.hsn })) } : {}),
+            hint: "Nothing is tagged yet. Call tagAllProducts again with every one of these: its usual HSN code (for codeButNoRate, the code it already has) and a generic English description of the goods.",
           };
         }
 

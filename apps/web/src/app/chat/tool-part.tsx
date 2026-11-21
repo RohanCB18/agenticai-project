@@ -373,7 +373,7 @@ function output(name: string, out: Record<string, unknown>): ReactNode {
   }
 
   if (name === "tagAllProducts") {
-    if (out.status === "untagged_products") return <p>Not tagged yet: {(out.products as string[]).join(", ")}</p>;
+    if (out.status === "untagged_products") return <p>To tag: {(out.products as string[]).join(", ")}</p>;
     if (out.status === "all_tagged") return <p>Every product is tagged.</p>;
     const choose = (out.chooseRate ?? []) as { product: string; hsn: string; options: { gst: string; item: string | null }[] }[];
     const unsure = (out.unconfirmed ?? []) as { product: string }[];

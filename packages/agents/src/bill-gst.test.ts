@@ -117,6 +117,14 @@ describe("tagging products from a bill", () => {
     expect(billLineGstTag(null, official)).toEqual({ hsn: null, gstRate: null, citation: null });
     expect(billLineGstTag("1006", null)).toEqual({ hsn: "1006", gstRate: null, citation: null });
   });
+
+  it("takes the rate the bill charged when it is one of the official ones", async () => {
+    // Live, Parle-G and sugar billed at 5% were left "rate to choose": their codes also cover 0% goods.
+    const official = await officialRatesByHsn(bill([line("Toor Dal", "0713", 5)]), knowledge);
+    expect(billLineGstTag("0713", official, 5)).toMatchObject({ hsn: "0713", gstRate: 5 });
+    expect(billLineGstTag("0713", official, 0)).toMatchObject({ gstRate: 0 });
+    expect(billLineGstTag("0713", official, 18)).toEqual({ hsn: "0713", gstRate: null, citation: null }); // not an official rate
+  });
 });
 
 describe("billGstSummary", () => {

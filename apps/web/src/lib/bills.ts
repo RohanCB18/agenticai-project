@@ -97,7 +97,7 @@ const DUPLICATE_WARNING = "This bill looks already added. Adding it again would 
  * for the line's HSN code agree on one rate: apply_bill copies it to a product with no tag yet.
  */
 function toStoredItem(item: PlannedItem, official: Record<string, OfficialRates> | null) {
-  const tag = billLineGstTag(item.hsn, official);
+  const tag = billLineGstTag(item.hsn, official, item.gstRate ?? null);
   return {
     name: item.name,
     quantity: item.quantity,

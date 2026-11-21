@@ -85,7 +85,9 @@ export function createPaymentLink(input: CreateLinkInput): Promise<CashfreeLink>
       customer_details: { customer_name: input.customer.name, customer_phone: tenDigit(input.customer.phone) },
       link_notify: { send_sms: cashfreeSendsSms(), send_email: false },
       link_expiry_time: input.expiresAt.toISOString(),
-      link_meta: { upi_intent: true, payment_methods: "upi", ...(input.notifyUrl ? { notify_url: input.notifyUrl } : {}) },
+      // UPI only for customers. In the sandbox, UPI on a computer is a QR no real app can pay, so a
+      // tester also gets net banking, whose test bank can approve a payment.
+      link_meta: { upi_intent: true, payment_methods: isProduction() ? "upi" : "upi,nb", ...(input.notifyUrl ? { notify_url: input.notifyUrl } : {}) },
       link_notes: input.notes,
     }),
   });

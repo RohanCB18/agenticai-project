@@ -110,13 +110,15 @@ export function compareBillGst(bill: Bill, official: Record<string, OfficialRate
 }
 
 /**
- * The GST tag a bill line gives its product: the line's HSN code, and the official rate only when
- * every entry for that code agrees on one (pulses are 0% loose and 5% packed: the owner chooses).
+ * The GST tag a bill line gives its product: the line's HSN code, and the official rate when every
+ * entry for that code agrees on one or, where they differ (biscuits 5% and plain roti 0% under
+ * 1905), when the bill charged one of them. Live, sugar and Parle-G billed at 5% were left "rate to
+ * choose". A rate that isn't official (toor dal billed at 18%) picks nothing: the owner chooses.
  */
-export function billLineGstTag(hsn: string | null | undefined, official: Record<string, OfficialRates> | null) {
+export function billLineGstTag(hsn: string | null | undefined, official: Record<string, OfficialRates> | null, charged: number | null = null) {
   const rates = hsn ? (official?.[hsn] ?? []) : [];
-  const only = rates.length === 1 ? rates[0]! : null;
-  return { hsn: hsn ?? null, gstRate: only?.rate ?? null, citation: only?.citation ?? null };
+  const chosen = rates.length === 1 ? rates[0] : charged === null ? undefined : rates.find((r) => Math.abs(r.rate - charged) < 0.001);
+  return { hsn: hsn ?? null, gstRate: chosen?.rate ?? null, citation: chosen?.citation ?? null };
 }
 
 /** Looks up a bill's HSN codes and compares what it charged. */

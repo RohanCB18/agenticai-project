@@ -347,8 +347,9 @@ describe("setProductGst", () => {
     expect(await tool.execute!({ productName: "akki", hsn: "1006 30", gstRate: 18 }, ctx)).toMatchObject({ status: "rate_not_official" });
     expect(store.products[1]?.hsn).toBeUndefined();
 
-    expect(await tool.execute!({ productName: "akki", hsn: "1006 30", gstRate: 5 }, ctx)).toMatchObject({ status: "tagged", hsn: "100630", gst: "5%" });
-    expect(store.products[1]).toMatchObject({ hsn: "100630", gstRate: 5 });
+    // The entries list 1006, so that is the code kept: a finer one would be the agent's guess.
+    expect(await tool.execute!({ productName: "akki", hsn: "1006 30", gstRate: 5 }, ctx)).toMatchObject({ status: "tagged", hsn: "1006", gst: "5%" });
+    expect(store.products[1]).toMatchObject({ hsn: "1006", gstRate: 5 });
   });
 
   it("saves nothing for a code no entry covers, an unknown product, or without the knowledge base", async () => {
@@ -447,6 +448,22 @@ describe("tagAllProducts", () => {
     expect(out).toMatchObject({ status: "tagged", tagged: [{ product: "Parle G", gst: "5%" }], chooseRate: [] });
   });
 
+  it("finishes products a bill gave a code but no rate", async () => {
+    // Live: after a bill, sugar and Parle-G had HSN codes and "rate to choose", and tag-all skipped them.
+    store.products.find((p) => p.name === "Sugar")!.hsn = "1701";
+    store.products.find((p) => p.name === "Parle G")!.hsn = "1905";
+    const listed = (await bulk.execute!({ products: [] }, ctx)) as Record<string, unknown>;
+    expect(listed).toMatchObject({ status: "untagged_products", codeButNoRate: [{ product: "Sugar", hsn: "1701" }, { product: "Parle G", hsn: "1905" }] });
+    expect(listed.products).toEqual(["Sugar", "Toor dal", "Parle G", "Sunflower oil"]);
+
+    const out = await bulk.execute!(
+      { products: [{ productName: "Sugar", hsn: "1701", goods: "sugar" }, { productName: "Parle G", hsn: "1905", goods: "biscuits" }] },
+      ctx,
+    );
+    expect(out).toMatchObject({ status: "tagged", tagged: [{ product: "Sugar", gst: "5%" }, { product: "Parle G", gst: "5%" }] });
+    expect(store.products.find((p) => p.name === "Sugar")).toMatchObject({ hsn: "1701", gstRate: 5 });
+  });
+
   it("says a shop with no products has nothing to tag", async () => {
     // Live, a new shop was told "every product is tagged".
     store.products.length = 0;
@@ -454,7 +471,7 @@ describe("tagAllProducts", () => {
   });
 
   it("says when everything is tagged, or the lookup is down", async () => {
-    for (const p of store.products) p.hsn = p.hsn ?? "1006";
+    for (const p of store.products) Object.assign(p, { hsn: p.hsn ?? "1006", gstRate: p.gstRate ?? 5 });
     expect(await bulk.execute!({ products: [] }, ctx)).toMatchObject({ status: "all_tagged" });
 
     for (const p of store.products) p.hsn = undefined;
