@@ -112,10 +112,13 @@ export type KhataToolOptions = {
   /** Runs chart programs in a sandbox. Without it, makeChart says charts are off. */
   charts?: ChartRunner;
   /** Starts a lookup on the official GST portal in the background (a browser in a sandbox). */
-  portal?: { start(question: string): Promise<void> };
+  portal?: { start(question: string): Promise<void | "no_inbox"> };
 };
 
 const LEDGER_LABELS: Record<string, string> = { credit_given: "udhaar", payment_received: "payment" };
+
+/** The entries an owner can correct, by the words the agent uses. */
+const CORRECTABLE = { udhaar: "credit_given", payment: "payment_received", sale: "sale", expense: "expense" } as const;
 
 /** "12 Oct 2026" in India time: the day the owner would say, not the UTC one. */
 const indianDate = (iso: string) => new Date(iso).toLocaleDateString("en-IN", { timeZone: "Asia/Kolkata", day: "numeric", month: "short", year: "numeric" });
@@ -352,6 +355,58 @@ export function createKhataTools(store: KhataStore, shopName = "your shop", opti
       },
     }),
 
+    correctEntry: tool({
+      description:
+        "Fix an entry the owner says was wrong: change its amount ('bijli ka bill 800 nahi 600 tha', 'Ramesh ka 450 galat likha, 400 tha') or remove it ('last wala hata do', rightAmount 0). Finds the latest matching entry of the last 7 days. Never record a new entry to fix a wrong one.",
+      inputSchema: z.object({
+        kind: z.enum(["udhaar", "payment", "sale", "expense"]),
+        customerName: z.string().optional().describe("For udhaar and payments"),
+        wrongAmount: Rupees.optional().describe("The amount as it was recorded, if the owner said it"),
+        rightAmount: z.number().min(0).max(10_00_000).describe("The correct amount in rupees; 0 removes the entry"),
+      }),
+      execute: async ({ kind, customerName, wrongAmount, rightAmount }) => {
+        const ledgerKind = CORRECTABLE[kind];
+        let customer: Customer | undefined;
+        if (kind === "udhaar" || kind === "payment") {
+          if (!customerName) return { status: "need_customer", hint: "Ask the owner whose entry it was." };
+          const r = await resolveCustomer(store, customerName);
+          if (!r.ok) return r.result;
+          customer = r.customer;
+        }
+        const since = Date.now() - 7 * 86_400_000;
+        const wrongPaise = wrongAmount === undefined ? undefined : rupeesToPaise(wrongAmount);
+        const entry = (await store.recentEntries(200, customer?.id)).find(
+          (e) => e.kind === ledgerKind && Date.parse(e.createdAt) >= since && (wrongPaise === undefined || e.amountPaise === wrongPaise),
+        );
+        const what = `${kind === "udhaar" ? "Udhaar" : kind[0]!.toUpperCase() + kind.slice(1)}${customer ? ` ${customer.name}` : ""}`;
+        if (!entry) {
+          return {
+            status: "entry_not_found",
+            entry: what,
+            hint: "No such entry in the last 7 days: nothing was changed. Tell the owner, and ask which entry they mean.",
+          };
+        }
+        // Money Cashfree reported, or Munshi paid out, is what the bank says: not the owner's to rewrite.
+        if (entry.source === "webhook" || entry.source === "system") {
+          return { status: "not_editable", entry: what, hint: "This entry came from Cashfree (an online payment or payout) and can't be changed. Nothing was changed." };
+        }
+        const rightPaise = rupeesToPaise(rightAmount);
+        if (rightPaise === entry.amountPaise) return { status: "unchanged", entry: what, amount: formatINR(rightPaise), hint: "It already says this amount: nothing was changed." };
+
+        const was = formatINR(entry.amountPaise); // read before the change
+        await store.correctLedgerEntry(entry.id, rightPaise > 0 ? rightPaise : null);
+        const balance = customer ? (await store.balances(customer.id))[0] : undefined;
+        return {
+          status: rightPaise > 0 ? "corrected" : "removed",
+          entry: what,
+          was,
+          ...(rightPaise > 0 ? { now: formatINR(rightPaise) } : {}),
+          recordedOn: indianDate(entry.createdAt),
+          ...(balance ? dues(balance.outstandingPaise) : {}),
+        };
+      },
+    }),
+
     recordSale: tool({
       description: "Record a cash or UPI sale that was paid in full (no credit), or a shop expense.",
       inputSchema: z.object({ kind: z.enum(["sale", "expense"]), amount: Rupees, note: z.string().max(200).optional() }),
@@ -415,11 +470,42 @@ export function createKhataTools(store: KhataStore, shopName = "your shop", opti
       execute: async ({ productName, change, reason }) => {
         const matches = rankProducts(productName, await store.listProducts());
         const [match] = matches;
-        if (!match) return { status: "product_not_found", productName };
+        if (!match) {
+          // Live, a new shop's "20 packet Maggi aaye" ended at "is its name something else?": nothing could add it.
+          return {
+            status: "product_not_found",
+            productName,
+            hint: "No product by this name. If it's new to the shop, call addProduct with its unit and this quantity as its stock (that records it, don't also call updateStock). If they may mean another product, ask which.",
+          };
+        }
         // Two products that both fit ("Rice" and "Sona Masoori Rice" for "akki"): ask, don't pick.
         if (tooClose(matches)) return { status: "ambiguous_product", candidates: matches.slice(0, 3).map((m) => m.item.name), hint: "Ask the owner which product." };
         const product = await store.moveStock({ productId: match.item.id, delta: change, reason });
         return { status: "updated", product: product.name, stock: `${product.stockQty} ${product.unit}` };
+      },
+    }),
+
+    addProduct: tool({
+      description:
+        "Add a product the shop doesn't have in Munshi yet ('Maggi naya product hai', or 20 packets of something updateStock didn't find). Give its unit and, if the owner said, how much is in stock now.",
+      inputSchema: z.object({
+        name: z.string().min(1).max(80).describe("The product's name as the owner says it, e.g. Maggi or Toor dal"),
+        unit: z.string().min(1).max(12).describe("kg, g, ltr, ml, pkt, pcs, box, bag, dozen..."),
+        stock: z.number().min(0).max(1_000_000).optional().describe("How much is in stock now, if the owner said"),
+      }),
+      execute: async ({ name, unit, stock }) => {
+        const [match] = rankProducts(name, await store.listProducts(), 0.85);
+        if (match) {
+          return {
+            status: "already_exists",
+            product: match.item.name,
+            stock: `${match.item.stockQty} ${match.item.unit}`,
+            hint: "This product is already in Munshi: nothing was added. For stock that arrived, use updateStock.",
+          };
+        }
+        let product = await store.addProduct({ name: name.trim(), unit: unit.trim() });
+        if (stock) product = await store.moveStock({ productId: product.id, delta: stock, reason: "purchase" });
+        return { status: "added", product: product.name, stock: `${product.stockQty} ${product.unit}` };
       },
     }),
 
@@ -505,9 +591,13 @@ export function createKhataTools(store: KhataStore, shopName = "your shop", opti
           .default([]),
       }),
       execute: async ({ products: asked }) => {
-        if (!knowledge) return { status: "no_knowledge", hint: "Tell the owner GST lookups aren't set up in Munshi yet." };
         const all = await store.listProducts();
         const untagged = all.filter((p) => !p.hsn);
+        if (all.length === 0) {
+          // Live, a new shop with no products was told "every product is tagged".
+          return { status: "no_products", hint: "Tell the owner Munshi has no products for this shop yet, so there is nothing to tag. They can add one: 'Maggi naya product hai, 20 packet'." };
+        }
+        if (!knowledge) return { status: "no_knowledge", hint: "Tell the owner GST lookups aren't set up in Munshi yet." };
         if (asked.length === 0) {
           if (untagged.length === 0) return { status: "all_tagged", hint: "Tell the owner every product already has its HSN code and GST rate." };
           return {
@@ -856,11 +946,20 @@ export function createKhataTools(store: KhataStore, shopName = "your shop", opti
       inputSchema: z.object({ question: z.string().min(5).max(200).describe("What to find, in English, e.g. 'What is the HSN code for makhana (fox nut)?'") }),
       execute: async ({ question }) => {
         if (!portal) return { status: "browsing_off", hint: "Tell the owner Munshi can't check the GST portal yet." };
+        let started;
         try {
-          await portal.start(question);
+          started = await portal.start(question);
         } catch (error) {
           console.error("[munshi] couldn't start a GST portal lookup:", error instanceof Error ? error.message : error);
           return { status: "portal_unavailable", hint: "Tell the owner the GST portal can't be checked right now; try again later." };
+        }
+        // The answer arrives as a message on Telegram (or WhatsApp). Live, a web-only shop was told
+        // "it will come on Telegram" with nothing linked, and the answer went nowhere.
+        if (started === "no_inbox") {
+          return {
+            status: "no_inbox",
+            hint: "Nothing was looked up: the portal's answer is sent on Telegram, and this shop hasn't connected it. Tell the owner to tap Connect Telegram on the dashboard, then ask again.",
+          };
         }
         return {
           status: "checking_portal",

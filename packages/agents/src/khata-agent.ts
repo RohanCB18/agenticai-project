@@ -119,7 +119,7 @@ export type KhataAgentOptions = {
   /** Runs chart programs in an isolated sandbox. */
   charts?: ChartRunner;
   /** Starts a background lookup on the official GST portal. */
-  portal?: { start(question: string): Promise<void> };
+  portal?: { start(question: string): Promise<void | "no_inbox"> };
 };
 
 const SHOP_FACTS_SHOWN = 12;

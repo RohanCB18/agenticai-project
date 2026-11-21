@@ -26,9 +26,11 @@ const ALL_TOOLS: KhataToolName[] = [
   "recordCredit",
   "recordPayment",
   "recordSale",
+  "correctEntry",
   "getBalances",
   "getStock",
   "updateStock",
+  "addProduct",
   "setReorderLevel",
   "setProductGst",
   "tagAllProducts",
@@ -51,13 +53,14 @@ type Specialist = { purpose: string; tools: KhataToolName[]; rules: string[] };
 const RULES = {
   credit: `"X ne 450 ka saaman liya", "X took 450 on credit", "X ge 450 udhaar" means recordCredit.`,
   payment: `"X ne 200 diye", "X paid 200" means recordPayment.`,
+  correct: `When the owner says an entry was wrong ("galti ho gayi, 800 nahi 600 tha", "Ramesh ka 450 galat likha", "last wala hata do"), call correctEntry with the right amount, or 0 to remove it. Never record a new entry to fix a wrong one: live, that turned an ₹800 expense into ₹1,400.`,
   // "Say the link is ready for the owner to forward" came out live as "Owner ise forward kar sakte
   // hain", talking about the owner to the owner. So the rule now says to speak to them directly.
   link: "To collect dues over UPI, use sendPaymentLink. If it reports missing_phone, ask for the customer's number, save it with updateCustomer, then send the link. The owner will be asked to approve it. If they deny it, acknowledge and do not retry. If the tool returns a link, it is already approved, so never ask for approval again. If customerNotified is false, the customer has NOT been told: tell the owner, speaking to them directly, that the link is ready for them to forward (\"aap ise X ko bhej sakte hain\"), never that it was sent.",
   qr: `Any request for a QR ("QR dikhao", "X ka QR", "scan karega"), or a customer who is in the shop ("yahan khada hai"), means call showPaymentQr, without asking first or looking up the balance. Never offer a link when the owner asked for a QR. Only after it returns qr_ready, tell the owner the QR is on screen. If it reports qr_unavailable, offer a payment link.`,
   check: `"X ka payment aaya?" or "did X pay?" means checkPayment.`,
   habits: `For payment patterns ("X kab deti hai?"), use paymentHabits rather than memory or guesses.`,
-  stock: `Stock that arrived ("10 packet Maggi aaya") is updateStock with a positive change; stock sold or used up is a negative change. "Kya khatam ho raha hai?" means getStock. "Rice 10 kg pe alert karna" (tell me when rice is down to 10 kg) means setReorderLevel. Owners name items in their own language (akki, chawal, sakkare): check getStock before deciding a word is a customer's name.`,
+  stock: `Stock that arrived ("10 packet Maggi aaya") is updateStock with a positive change; stock sold or used up is a negative change. "Kya khatam ho raha hai?" means getStock. "Rice 10 kg pe alert karna" (tell me when rice is down to 10 kg) means setReorderLevel. Owners name items in their own language (akki, chawal, sakkare): check getStock before deciding a word is a customer's name. Goods Munshi doesn't know yet are added with addProduct (ask the unit if the owner didn't say it).`,
   restock: `To restock, askSupplierQuote gets a quote from the wholesaler's agent (omit items to quote everything running low). Tell the owner the items, the total and the delivery slot, and what the wholesaler can't supply. Only after the owner says yes, call placeSupplierOrder; the owner then approves it with a button. Never state a price the quote didn't give.`,
   payout: `To pay a supplier or wholesaler ("Sharma Traders ko payment karo"), call supplierDues and tell the owner what is due and where it would go. Only after the owner says yes, call paySupplier with the amount; the owner then approves it with a button. If there is no verified account, tell the owner to add it in Munshi's dashboard: Munshi can never add or change where money goes. Never say money reached the supplier unless paySupplier returned paid.`,
   portal: `checkGstPortal looks an item up on the official GST portal in the background, in about a minute. Use it only when lookupGst found no clear entry for the item, or the owner asks for the portal. For an HSN code, call lookupGst first: its entries carry HSN codes. Never use the portal to tag a product ("HSN laga do"): that is lookupGst, then setProductGst. Never tell the owner an HSN code no official entry showed.`,
@@ -72,8 +75,8 @@ const RULES = {
 export const SPECIALISTS: Record<Exclude<Desk, "general">, Specialist> = {
   khata: {
     purpose: "the khata: udhaar given, cash payments received, sales, expenses, balances, a customer's history and customer details",
-    tools: ["findCustomer", "addCustomer", "updateCustomer", "customerHistory", "recordCredit", "recordPayment", "recordSale", "getBalances", "makeChart", ...MEMORY_TOOLS],
-    rules: [RULES.credit, RULES.payment, RULES.history, RULES.customer, RULES.chart, RULES.memory],
+    tools: ["findCustomer", "addCustomer", "updateCustomer", "customerHistory", "recordCredit", "recordPayment", "recordSale", "correctEntry", "getBalances", "makeChart", ...MEMORY_TOOLS],
+    rules: [RULES.credit, RULES.payment, RULES.correct, RULES.history, RULES.customer, RULES.chart, RULES.memory],
   },
   collections: {
     purpose: "collecting dues: payment links, QR codes, checking whether a customer paid, cash handed over, and how customers usually pay",
@@ -84,6 +87,7 @@ export const SPECIALISTS: Record<Exclude<Desk, "general">, Specialist> = {
       "getBalances",
       "recordPayment",
       "recordSale",
+      "correctEntry",
       "sendPaymentLink",
       "showPaymentQr",
       "checkPayment",
@@ -97,7 +101,7 @@ export const SPECIALISTS: Record<Exclude<Desk, "general">, Specialist> = {
   stock: {
     purpose: "stock: what is left, what arrived, what sold, what is running low, reordering from and paying the wholesaler, the GST on goods and tagging products with their HSN code and GST rate",
     // GST questions name a product ("Maggi pe kitna GST?"), so the router often sends them here.
-    tools: ["getStock", "updateStock", "setReorderLevel", "setProductGst", "tagAllProducts", "recordSale", "askSupplierQuote", "placeSupplierOrder", "supplierDues", "paySupplier", "lookupGst", "checkGstPortal", "makeChart", ...MEMORY_TOOLS],
+    tools: ["getStock", "updateStock", "addProduct", "setReorderLevel", "setProductGst", "tagAllProducts", "recordSale", "askSupplierQuote", "placeSupplierOrder", "supplierDues", "paySupplier", "lookupGst", "checkGstPortal", "makeChart", ...MEMORY_TOOLS],
     rules: [RULES.stock, RULES.restock, RULES.payout, RULES.gst, RULES.gstTag, RULES.portal, RULES.chart, RULES.memory],
   },
 };
@@ -105,6 +109,7 @@ export const SPECIALISTS: Record<Exclude<Desk, "general">, Specialist> = {
 const GENERAL_RULES = [
   RULES.credit,
   RULES.payment,
+  RULES.correct,
   RULES.link,
   RULES.qr,
   RULES.check,
@@ -212,12 +217,12 @@ export type Route = { desk: Desk; by: "model" | "qr" | "approval" | "fallback"; 
 
 const ROUTER_PROMPT = `You route a shop owner's message to one desk of their bookkeeping assistant. The message may be in any Indian language, in its own script or in English letters. Reply with one word only: khata, collections, stock or general.
 
-khata: udhaar given, money a customer handed over in cash, sales, expenses, who owes how much, what a customer took or paid over time, charts of sales or udhaar, adding a customer or their phone number.
-  "Suresh ne 300 ka samaan liya", "सुरेश ने 500 रुपये दिए", "Lakshmi 200 kottlu", "Kal 900 ka dhanda hua", "Dukaan ka kiraya 5000 diya", "Lakshmi ku evvalavu baaki?", "Suresh ne is mahine kya kya liya?", "Is mahine ki sale ka chart dikhao", "Lakshmi ka number 9876543210 hai"
+khata: udhaar given, money a customer handed over in cash, sales, expenses, who owes how much, what a customer took or paid over time, charts of sales or udhaar, adding a customer or their phone number, fixing or removing a wrong entry.
+  "Suresh ne 300 ka samaan liya", "Galti ho gayi, bijli ka bill 800 nahi 600 tha", "सुरेश ने 500 रुपये दिए", "Lakshmi 200 kottlu", "Kal 900 ka dhanda hua", "Dukaan ka kiraya 5000 diya", "Lakshmi ku evvalavu baaki?", "Suresh ne is mahine kya kya liya?", "Is mahine ki sale ka chart dikhao", "Lakshmi ka number 9876543210 hai"
 collections: getting paid over UPI: sending a payment link, showing a QR code, checking whether an online payment arrived, when a customer usually pays.
   "Suresh ko link bhej do", "Lakshmi ka QR banao", "Suresh ne online bheja kya?", "Lakshmi aam taur par kab paisa deti hai?"
 stock: how much of an item is left, stock that arrived or sold, what is running low, ordering more from the wholesaler, paying the wholesaler, GST on goods, HSN codes, tagging a product with its HSN code and GST rate.
-  "Atta kitna hai?", "Sakkare eshtu ide?", "20 packet biscuit aaye", "Tel 2 litre bika", "Wholesaler se dal ka rate pucho", "Sharma Traders ko payment kar do", "Maggi pe kitna GST lagta hai?", "Rice ka HSN laga do", "Baaki sab products ka HSN laga do", "Makhana ka HSN code kya hai?"
+  "Atta kitna hai?", "Sakkare eshtu ide?", "20 packet biscuit aaye", "Tel 2 litre bika", "Wholesaler se dal ka rate pucho", "Sharma Traders ko payment kar do", "Maggi pe kitna GST lagta hai?", "Rice ka HSN laga do", "Baaki sab products ka HSN laga do", "Maggi naya product hai, 20 packet aaye", "Makhana ka HSN code kya hai?"
 general: greetings, thanks, remembering or recalling facts, anything else, or a message that needs more than one desk.
   "Hello ji", "Yaad rakhna, Suresh Monday ko aata hai", "Lakshmi kaun hai?"
 

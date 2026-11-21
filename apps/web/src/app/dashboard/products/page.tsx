@@ -64,7 +64,7 @@ async function Products() {
             ))}
           </ul>
         ) : (
-          <p className="text-muted">No products yet. They appear as you add stock or approve a supplier bill.</p>
+          <p className="text-muted">No products yet. Tell Munshi “Maggi naya product hai, 20 packet aaye”, or send a photo of a supplier bill on Telegram.</p>
         )}
       </section>
     </>

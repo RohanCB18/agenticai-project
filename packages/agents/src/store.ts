@@ -19,7 +19,16 @@ export type Product = {
   gstCitation?: string | null;
 };
 export type Balance = { customerId: string; name: string; outstandingPaise: Paise; lastCreditAt: string | null; lastPaymentAt: string | null };
-export type LedgerEntry = { id: string; kind: LedgerKind; amountPaise: Paise; customerId: string | null; note: string | null; createdAt: string };
+export type LedgerEntry = {
+  id: string;
+  kind: LedgerKind;
+  amountPaise: Paise;
+  customerId: string | null;
+  note: string | null;
+  createdAt: string;
+  /** Who wrote it: the owner (chat, voice, telegram, whatsapp, mcp), Cashfree (webhook) or Munshi itself (system). */
+  source?: string;
+};
 
 export type PaymentLink = {
   id: string;
@@ -53,7 +62,11 @@ export interface KhataStore {
   addLedgerEntry(input: { kind: LedgerKind; amountPaise: Paise; customerId?: string; note?: string; traceId?: string }): Promise<LedgerEntry>;
   balances(customerId?: string): Promise<Balance[]>;
   recentEntries(limit: number, customerId?: string): Promise<LedgerEntry[]>;
+  /** Changes an entry's amount, or removes it (null), keeping the old one in the audit log. */
+  correctLedgerEntry(entryId: string, amountPaise: Paise | null): Promise<void>;
   listProducts(): Promise<Product[]>;
+  /** A new product with no stock yet. */
+  addProduct(input: { name: string; unit: string }): Promise<Product>;
   moveStock(input: { productId: string; delta: number; reason: string }): Promise<Product>;
   /** The stock level at or below which a product counts as running low; null removes the alert. */
   setReorderLevel(productId: string, level: number | null): Promise<Product>;

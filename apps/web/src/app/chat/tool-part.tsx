@@ -1,5 +1,6 @@
 "use client";
 
+import type { ReactNode } from "react";
 import type { KhataUIMessage } from "@munshi/agents";
 import { completedActionsInParts, receiptLines } from "@munshi/agents/receipts";
 
@@ -23,6 +24,8 @@ const LABELS: Record<string, string> = {
   getBalances: "Dues",
   getStock: "Stock",
   updateStock: "Stock change",
+  addProduct: "New product",
+  correctEntry: "Fixing an entry",
   setReorderLevel: "Low-stock alert",
   setProductGst: "GST tag",
   tagAllProducts: "GST tags",
@@ -133,16 +136,18 @@ export function ToolPart({ part, onDecision }: { part: Part; onDecision: Decide 
   const choices = name === "tagAllProducts" && Array.isArray((part.output as { chooseRate?: unknown[] }).chooseRate) && (part.output as { chooseRate: unknown[] }).chooseRate.length > 0;
   if (receiptLines(completedActionsInParts([part])).length > 0 && !choices) return null;
 
-  const out = part.output as Record<string, unknown>;
+  const body = output(name, part.output as Record<string, unknown>);
+  if (body == null) return null;
   return (
     <div className="max-w-sm rounded-lg border border-line bg-surface px-4 py-3 text-sm">
       <p className="mb-1 text-xs uppercase tracking-wider text-muted">{label}</p>
-      <Output name={name} out={out} />
+      {body}
     </div>
   );
 }
 
-function Output({ name, out }: { name: string; out: Record<string, unknown> }) {
+/** What a card shows for a tool's result, or null for no card: the reply already says it. */
+function output(name: string, out: Record<string, unknown>): ReactNode {
   if (out.status === "customer_not_found") return <p>No customer called “{String(out.name)}” yet.</p>;
   if (out.status === "ambiguous_customer") return <p>Which one: {(out.candidates as string[]).join(", ")}?</p>;
 
@@ -166,6 +171,7 @@ function Output({ name, out }: { name: string; out: Record<string, unknown> }) {
 
   if (name === "getStock") {
     const rows = out.products as { name: string; stock: string; low: boolean }[];
+    if (!rows?.length) return null;
     return (
       <div className="flex flex-col gap-1">
         {rows.map((r) => (
@@ -393,6 +399,7 @@ function Output({ name, out }: { name: string; out: Record<string, unknown> }) {
     );
   }
 
-  if (typeof out.status === "string" && out.hint) return <p>{String(out.hint)}</p>;
-  return <p className="font-mono text-xs">{JSON.stringify(out)}</p>;
+  // Anything else: no card. A tool's hint is written for the agent ("call again with
+  // confirmedNew: true"), and live it showed up in front of the owner.
+  return null;
 }

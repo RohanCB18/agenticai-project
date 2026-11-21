@@ -26,6 +26,9 @@ const EXPOSED: Record<string, { title: string; annotations: Annotations }> = {
   recordCredit: { title: "Record udhaar", annotations: { readOnlyHint: false, destructiveHint: false } },
   recordPayment: { title: "Record a payment", annotations: { readOnlyHint: false, destructiveHint: false } },
   recordSale: { title: "Record a sale or expense", annotations: { readOnlyHint: false, destructiveHint: false } },
+  addProduct: { title: "Add a product", annotations: { readOnlyHint: false, destructiveHint: false } },
+  // Changes or removes an entry the owner says was wrong; the old one is kept in the audit log.
+  correctEntry: { title: "Fix or remove a wrong entry", annotations: { readOnlyHint: false, destructiveHint: true } },
   updateStock: { title: "Change stock", annotations: { readOnlyHint: false, destructiveHint: false } },
   setReorderLevel: { title: "Set a low-stock alert", annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true } },
   // Replaces a product's HSN code and GST rate; the rate always comes from an official entry.

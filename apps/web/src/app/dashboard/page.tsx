@@ -69,7 +69,9 @@ async function Books() {
         <div className="rounded-lg border border-line bg-surface p-5">
           <p className="text-sm text-muted">Udhaar to collect</p>
           <p className="font-display text-4xl font-semibold tabular-nums">{formatINR(totalUdhaar)}</p>
-          <p className="text-sm text-muted">{balances?.length ?? 0} customers</p>
+          <p className="text-sm text-muted">
+            {balances?.length ?? 0} customer{balances?.length === 1 ? "" : "s"}
+          </p>
         </div>
         <div className="rounded-lg border border-line bg-surface p-5">
           <p className="text-sm text-muted">Items to reorder</p>

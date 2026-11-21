@@ -16,7 +16,7 @@ function must<T>(result: { data: T | null; error: { message: string } | null }, 
 }
 
 type CustomerRow = { id: string; name: string; aliases: string[]; phone: string | null; language: Customer["language"] };
-type EntryRow = { id: string; kind: LedgerEntry["kind"]; amount_paise: number; customer_id: string | null; note: string | null; created_at: string };
+type EntryRow = { id: string; kind: LedgerEntry["kind"]; amount_paise: number; customer_id: string | null; note: string | null; created_at: string; source?: string };
 type ProductRow = {
   id: string;
   name: string;
@@ -38,6 +38,7 @@ const toEntry = (r: EntryRow): LedgerEntry => ({
   customerId: r.customer_id,
   note: r.note,
   createdAt: r.created_at,
+  ...(r.source ? { source: r.source } : {}),
 });
 
 const toProduct = (r: ProductRow): Product => ({
@@ -123,10 +124,30 @@ export function createSupabaseKhataStore(db: SupabaseClient, merchantId: string,
       );
     },
 
+    async correctLedgerEntry(entryId, amountPaise) {
+      const old = must(
+        await db.from("ledger_entries").select("id, kind, amount_paise, customer_id, note, created_at, source").eq("id", entryId).eq("merchant_id", merchantId).single(),
+        "Read ledger entry",
+      ) as EntryRow;
+      // The old entry goes to the audit log first: a correction never loses what was written.
+      await store.audit("ledger_entry_corrected", { entryId, kind: old.kind, customerId: old.customer_id, was: Number(old.amount_paise), now: amountPaise, recordedAt: old.created_at });
+      if (amountPaise === null) must(await db.from("ledger_entries").delete().eq("id", entryId).eq("merchant_id", merchantId).select("id").single(), "Remove ledger entry");
+      else must(await db.from("ledger_entries").update({ amount_paise: amountPaise }).eq("id", entryId).eq("merchant_id", merchantId).select("id").single(), "Correct ledger entry");
+      if (old.customer_id && (old.kind === "credit_given" || old.kind === "payment_received")) await closeOpenRequests(old.customer_id);
+    },
+
+    async addProduct({ name, unit }) {
+      const product = toProduct(
+        must(await db.from("products").insert({ merchant_id: merchantId, name, unit }).select(PRODUCT_COLUMNS).single(), "Add product") as ProductRow,
+      );
+      await store.audit("product_added", { productId: product.id, name, unit });
+      return product;
+    },
+
     async recentEntries(limit, customerId) {
       let q = db
         .from("ledger_entries")
-        .select("id, kind, amount_paise, customer_id, note, created_at")
+        .select("id, kind, amount_paise, customer_id, note, created_at, source")
         .eq("merchant_id", merchantId)
         .order("created_at", { ascending: false })
         .limit(limit);

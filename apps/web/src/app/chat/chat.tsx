@@ -40,8 +40,12 @@ export function Chat({ initialMessages = [] }: { initialMessages?: KhataUIMessag
     sendMessage({ text: transcript, metadata: { source: "voice" } });
   });
 
+  // A saved chat opens at its newest message at once: a smooth scroll over 40 messages stopped
+  // short of the end in testing. New messages after that scroll smoothly.
+  const opened = useRef(false);
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
+    bottomRef.current?.scrollIntoView({ behavior: opened.current ? "smooth" : "auto", block: "end" });
+    opened.current = true;
   }, [messages]);
 
   // When a voice turn finishes, speak the reply text that hasn't been spoken yet.

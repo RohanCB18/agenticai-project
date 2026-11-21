@@ -68,6 +68,9 @@ export function buildKhataAgent(opts: {
     portal: browserConfigured()
       ? {
           start: async (question: string) => {
+            // The answer is sent on a linked chat app; with none, there is nowhere to send it.
+            const { count } = await opts.db.from("channel_links").select("channel", { count: "exact", head: true }).eq("merchant_id", opts.merchant.id);
+            if (!count) return "no_inbox" as const;
             await start(gstPortalLookup, [{ merchantId: opts.merchant.id, question }]);
           },
         }

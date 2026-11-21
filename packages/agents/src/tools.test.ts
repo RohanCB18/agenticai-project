@@ -447,6 +447,12 @@ describe("tagAllProducts", () => {
     expect(out).toMatchObject({ status: "tagged", tagged: [{ product: "Parle G", gst: "5%" }], chooseRate: [] });
   });
 
+  it("says a shop with no products has nothing to tag", async () => {
+    // Live, a new shop was told "every product is tagged".
+    store.products.length = 0;
+    expect(await bulk.execute!({ products: [] }, ctx)).toMatchObject({ status: "no_products", hint: expect.stringContaining("no products") });
+  });
+
   it("says when everything is tagged, or the lookup is down", async () => {
     for (const p of store.products) p.hsn = p.hsn ?? "1006";
     expect(await bulk.execute!({ products: [] }, ctx)).toMatchObject({ status: "all_tagged" });
@@ -602,5 +608,60 @@ describe("checkGstPortal", () => {
     const quiet = vi.spyOn(console, "error").mockImplementation(() => {});
     expect(await broken.checkGstPortal.execute!({ question: "HSN for makhana?" }, ctx)).toMatchObject({ status: "portal_unavailable" });
     quiet.mockRestore();
+  });
+
+  it("says where the answer would go when the shop has no chat app linked", async () => {
+    const webOnly = createKhataTools(store, "S", { portal: { start: async () => "no_inbox" as const } });
+    expect(await webOnly.checkGstPortal.execute!({ question: "HSN for makhana?" }, ctx)).toMatchObject({ status: "no_inbox", hint: expect.stringContaining("Connect Telegram") });
+  });
+});
+
+describe("addProduct", () => {
+  it("adds goods the shop didn't have, with the stock that arrived, after updateStock found nothing", async () => {
+    // Live, in a new shop, "20 packet Maggi aaye" could only end in "is its name something else?".
+    expect(await tools.updateStock.execute!({ productName: "Maggi", change: 20, reason: "purchase" }, ctx)).toMatchObject({
+      status: "product_not_found",
+      hint: expect.stringContaining("addProduct"),
+    });
+    const out = await tools.addProduct.execute!({ name: "Maggi", unit: "pkt", stock: 20 }, ctx);
+    expect(out).toEqual({ status: "added", product: "Maggi", stock: "20 pkt" });
+    expect(receiptLines([{ tool: "addProduct", output: out as Record<string, unknown> }])).toEqual(["🧾 New product: Maggi · 20 pkt"]);
+    expect(await tools.updateStock.execute!({ productName: "maggi", change: -2, reason: "sale" }, ctx)).toMatchObject({ status: "updated", stock: "18 pkt" });
+  });
+
+  it("never adds a product twice", async () => {
+    await tools.addProduct.execute!({ name: "Toor dal", unit: "kg" }, ctx);
+    expect(await tools.addProduct.execute!({ name: "toor dal", unit: "kg", stock: 5 }, ctx)).toMatchObject({ status: "already_exists", product: "Toor dal", stock: "0 kg" });
+    expect(store.products).toHaveLength(1);
+  });
+});
+
+describe("correctEntry", () => {
+  it("changes a wrong amount instead of adding a second entry", async () => {
+    // Live, "bijli ka bill 800 nahi 600 tha, theek kar do" recorded another ₹600: expenses ₹1,400.
+    await tools.recordSale.execute!({ kind: "expense", amount: 800, note: "bijli" }, ctx);
+    const out = await tools.correctEntry.execute!({ kind: "expense", wrongAmount: 800, rightAmount: 600 }, ctx);
+    expect(out).toMatchObject({ status: "corrected", entry: "Expense", was: "₹800", now: "₹600" });
+    expect(store.entries.map((e) => [e.kind, e.amountPaise])).toEqual([["expense", 60000]]);
+    expect(store.auditLog.at(-1)).toMatchObject({ action: "ledger_entry_corrected", details: { was: 80000, now: 60000 } });
+    expect(receiptLines([{ tool: "correctEntry", output: out as Record<string, unknown> }])[0]).toMatch(/^🧾 Fixed: Expense ₹800 → ₹600 \(/);
+  });
+
+  it("removes a customer's entry and gives the new balance", async () => {
+    await tools.recordCredit.execute!({ customerName: "Fatima", amount: 450 }, ctx);
+    await tools.recordCredit.execute!({ customerName: "Fatima", amount: 300 }, ctx);
+    const out = await tools.correctEntry.execute!({ kind: "udhaar", customerName: "Fatima", rightAmount: 0 }, ctx);
+    expect(out).toMatchObject({ status: "removed", entry: "Udhaar Fatima", was: "₹300", nowOwes: "₹450" });
+    expect(receiptLines([{ tool: "correctEntry", output: out as Record<string, unknown> }])[0]).toMatch(/^🧾 Removed: Udhaar Fatima ₹300 \(.+\) · owes ₹450$/);
+  });
+
+  it("changes nothing it can't find, and never what Cashfree recorded", async () => {
+    expect(await tools.correctEntry.execute!({ kind: "sale", wrongAmount: 999, rightAmount: 500 }, ctx)).toMatchObject({ status: "entry_not_found" });
+    expect(await tools.correctEntry.execute!({ kind: "payment", rightAmount: 100 }, ctx)).toMatchObject({ status: "need_customer" });
+
+    const paidOnline = await store.addLedgerEntry({ kind: "payment_received", amountPaise: 25000, customerId: store.customers[2]!.id });
+    paidOnline.source = "webhook";
+    expect(await tools.correctEntry.execute!({ kind: "payment", customerName: "Fatima", rightAmount: 100 }, ctx)).toMatchObject({ status: "not_editable" });
+    expect(paidOnline.amountPaise).toBe(25000);
   });
 });

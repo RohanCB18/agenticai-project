@@ -6,7 +6,7 @@ import type { ModelMessage } from "ai";
 export type Action = { tool: string; output: Record<string, unknown> };
 
 /** Statuses a write tool returns only after the change is saved. */
-const DONE = new Set(["added", "recorded", "updated", "sent", "qr_ready", "payment_received", "remembered", "forgotten", "ordered", "alert_set", "paid", "payout_started", "tagged"]);
+const DONE = new Set(["added", "recorded", "updated", "sent", "qr_ready", "payment_received", "remembered", "forgotten", "ordered", "alert_set", "paid", "payout_started", "tagged", "corrected", "removed"]);
 
 /** True for a tool output that reports a saved change. */
 function isDone(output: unknown): output is Record<string, unknown> {
@@ -65,6 +65,16 @@ export function receiptLines(actions: Action[]): string[] {
         return [output.alertAt ? `🧾 Alert: ${s(output.product)} at ${s(output.alertAt)} (now ${s(output.stock)})` : `🧾 Alert removed: ${s(output.product)}`];
       case "setProductGst":
         return [`🧾 GST tag: ${s(output.product)} · HSN ${s(output.hsn)} · ${s(output.gst)}`];
+      case "addProduct":
+        return [`🧾 New product: ${s(output.product)} · ${s(output.stock)}`];
+      case "correctEntry": {
+        const owes = output.nowOwes ? ` · owes ${s(output.nowOwes)}${advanceNote(output)}` : "";
+        return [
+          output.status === "removed"
+            ? `🧾 Removed: ${s(output.entry)} ${s(output.was)} (${s(output.recordedOn)})${owes}`
+            : `🧾 Fixed: ${s(output.entry)} ${s(output.was)} → ${s(output.now)} (${s(output.recordedOn)})${owes}`,
+        ];
+      }
       case "tagAllProducts":
         return ((output.tagged ?? []) as Record<string, unknown>[]).map((t) => `🧾 GST tag: ${s(t.product)} · HSN ${s(t.hsn)} · ${s(t.gst)}`);
       case "paySupplier":

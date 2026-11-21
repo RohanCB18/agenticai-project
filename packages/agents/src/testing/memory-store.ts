@@ -72,8 +72,22 @@ export class MemoryStore implements KhataStore {
     return this.entries.filter((e) => !customerId || e.customerId === customerId).slice(-limit).reverse();
   }
 
+  async correctLedgerEntry(entryId: string, amountPaise: number | null) {
+    const entry = this.entries.find((e) => e.id === entryId);
+    if (!entry) throw new Error(`No entry ${entryId}`);
+    this.auditLog.push({ action: "ledger_entry_corrected", details: { entryId, kind: entry.kind, was: entry.amountPaise, now: amountPaise } });
+    if (amountPaise === null) this.entries = this.entries.filter((e) => e.id !== entryId);
+    else entry.amountPaise = amountPaise;
+  }
+
   async listProducts() {
     return this.products;
+  }
+
+  async addProduct({ name, unit }: { name: string; unit: string }) {
+    const product: Product = { id: this.id("prd"), name, aliases: [], unit, stockQty: 0, reorderLevel: null, pricePaise: null };
+    this.products.push(product);
+    return product;
   }
 
   async moveStock({ productId, delta }: { productId: string; delta: number; reason: string }) {
