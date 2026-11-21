@@ -14,11 +14,11 @@ import {
   salesChartSkipsUdhaar,
 } from "./charts";
 import { paymentHabits } from "./habits";
-import { coversHsn, type GstPassage, gstCitation, type KnowledgeBase, officialRates } from "./knowledge";
+import { coversHsn, type GstPassage, gstCitation, type KnowledgeBase, officialRates, sameGoods } from "./knowledge";
 import { ownerWasAskedAboutRepeat } from "./threads";
 import { rankByName } from "./match";
 import { rankProducts, tooClose } from "./staples";
-import type { Customer, KhataStore, Supplier } from "./store";
+import type { Customer, KhataStore, Product, Supplier } from "./store";
 import { latestQuoteId, type QuoteRequestItem, readQuote, SupplierError, type SupplierAgent } from "./supplier";
 
 const Rupees = z
@@ -149,6 +149,57 @@ async function resolveSupplier(store: KhataStore, name: string): Promise<Resolve
 }
 
 const NO_SUPPLIER = { status: "no_supplier", hint: "Tell the owner no wholesaler is connected to Munshi yet." };
+
+const HSN_CODE = /^\d{4}(\s?\d{2}){0,2}$/;
+
+type GstOption = { gst: string; gstRate: number; item: string | null; citation: string | null };
+type BulkTagOutcome =
+  | { kind: "tagged"; product: string; hsn: string; gst: string; citation: string | null }
+  | { kind: "choose_rate"; product: string; hsn: string; options: GstOption[] }
+  | { kind: "unconfirmed"; product: string; hsn: string; goods: string; officialFor: { hsn: string | null; item: string | null }[] }
+  | { kind: "already_tagged"; product: string }
+  | { kind: "not_found"; productName: string }
+  | { kind: "unavailable"; product: string };
+
+/**
+ * One product of tagAllProducts. The model gives a code and what the goods are; the code counts
+ * only if a top official entry for those goods carries it (live, a search for the bare name "Parle
+ * G" found plastic scrap, and "Toor dal" found jaggery). The rate comes from that entry and its
+ * loose or packed twin; if those differ, the owner chooses.
+ */
+async function tagOneProduct(store: KhataStore, knowledge: KnowledgeBase, products: Product[], item: { productName: string; hsn: string; goods: string }): Promise<BulkTagOutcome> {
+  const matches = rankProducts(item.productName, products);
+  const [match] = matches;
+  if (!match || tooClose(matches)) return { kind: "not_found", productName: item.productName };
+  const product = match.item.name;
+  if (match.item.hsn) return { kind: "already_tagged", product };
+
+  const code = item.hsn.replace(/\s/g, "");
+  let found: GstPassage[];
+  let forCode: GstPassage[];
+  try {
+    [found, forCode] = await Promise.all([knowledge.searchGst(item.goods, 8), knowledge.searchGst(`${code} ${item.goods}`, 10)]);
+  } catch (error) {
+    console.error("[munshi] GST lookup failed:", error instanceof Error ? error.message : error);
+    return { kind: "unavailable", product };
+  }
+  // The best official entry for the goods must carry the code. Live, with any of the top five
+  // allowed, "pulses split" confirmed 1106 (dal flour) for toor dal.
+  const top = found.find((entry) => entry.gst !== null);
+  const confirmed = top && coversHsn(top, code) ? top : undefined;
+  if (!confirmed) {
+    return { kind: "unconfirmed", product, hsn: code, goods: item.goods, officialFor: found.slice(0, 3).map((e) => ({ hsn: e.hsn, item: e.description })) };
+  }
+  const seen = new Set<string>();
+  const twins = [confirmed, ...found, ...forCode].filter((e) => !seen.has(e.id) && (seen.add(e.id), coversHsn(e, code) && sameGoods(e, confirmed)));
+  const rates = officialRates(twins);
+  if (rates.length > 1) {
+    return { kind: "choose_rate", product, hsn: code, options: rates.map((r) => ({ gst: `${r.rate}%`, gstRate: r.rate, item: r.item, citation: r.citation })) };
+  }
+  const [rate] = rates;
+  const saved = await store.setProductGst(match.item.id, { hsn: code, gstRate: rate!.rate, citation: rate!.citation });
+  return { kind: "tagged", product: saved.name, hsn: code, gst: `${rate!.rate}%`, citation: rate!.citation };
+}
 
 function supplierDown(name: string, error: unknown) {
   if (error instanceof SupplierError) return { status: error.code, supplier: name, message: error.message };
@@ -397,10 +448,7 @@ export function createKhataTools(store: KhataStore, shopName = "your shop", opti
         "Tag a product with its HSN code and GST rate, the base for GST bills. Take the HSN code from lookupGst's entries or the supplier's bill. The rate always comes from the official entries for that code, never from you: if they allow more than one (often loose vs pre-packaged and labelled), the tool lists them; ask the owner which fits and call again with gstRate.",
       inputSchema: z.object({
         productName: z.string(),
-        hsn: z
-          .string()
-          .regex(/^\d{4}(\s?\d{2}){0,2}$/, "4, 6 or 8 digits")
-          .describe("HSN code, e.g. 1902 or 0713 10 00"),
+        hsn: z.string().regex(HSN_CODE, "4, 6 or 8 digits").describe("HSN code, e.g. 1902 or 0713 10 00"),
         gstRate: z.number().min(0).max(40).optional().describe("Only after the owner chose between the official rates the tool listed"),
       }),
       execute: async ({ productName, hsn, gstRate }) => {
@@ -438,6 +486,71 @@ export function createKhataTools(store: KhataStore, shopName = "your shop", opti
         }
         const product = await store.setProductGst(match.item.id, { hsn: code, gstRate: chosen.rate, citation: chosen.citation });
         return { status: "tagged", product: product.name, hsn: code, gst: `${chosen.rate}%`, citation: chosen.citation };
+      },
+    }),
+
+    tagAllProducts: tool({
+      description:
+        "Tag every product that has no HSN code yet, in one go ('baaki sab ka HSN laga do', 'saare products ka GST tag karo'). Call it with no products first: it lists the untagged ones. Then call it again with each of them: its usual HSN code and a generic English description of the goods (as for lookupGst: Parle-G is 'biscuits', toor dal is 'pulses, split'). A product is tagged only when the official entries found for that description carry that code, and the rate always comes from those entries. Where loose and packed goods differ, it tags nothing and lists the options to ask the owner about.",
+      inputSchema: z.object({
+        products: z
+          .array(
+            z.object({
+              productName: z.string(),
+              hsn: z.string().regex(HSN_CODE, "4, 6 or 8 digits").describe("The product's usual HSN code, e.g. 1701"),
+              goods: z.string().min(2).max(200).describe("Generic English description of the goods"),
+            }),
+          )
+          .max(25)
+          .default([]),
+      }),
+      execute: async ({ products: asked }) => {
+        if (!knowledge) return { status: "no_knowledge", hint: "Tell the owner GST lookups aren't set up in Munshi yet." };
+        const all = await store.listProducts();
+        const untagged = all.filter((p) => !p.hsn);
+        if (asked.length === 0) {
+          if (untagged.length === 0) return { status: "all_tagged", hint: "Tell the owner every product already has its HSN code and GST rate." };
+          return {
+            status: "untagged_products",
+            products: untagged.map((p) => p.name),
+            hint: "Nothing is tagged yet. Call tagAllProducts again with every one of these: its usual HSN code and a generic English description of the goods.",
+          };
+        }
+
+        const outcomes: BulkTagOutcome[] = [];
+        for (let i = 0; i < asked.length; i += 4) {
+          outcomes.push(...(await Promise.all(asked.slice(i, i + 4).map((item) => tagOneProduct(store, knowledge, all, item)))));
+        }
+        const of = <K extends BulkTagOutcome["kind"]>(kind: K) => outcomes.filter((o): o is Extract<BulkTagOutcome, { kind: K }> => o.kind === kind);
+        const tagged = of("tagged").map(({ kind: _, ...o }) => o);
+        const chooseRate = of("choose_rate").map(({ kind: _, ...o }) => o);
+        const unconfirmed = of("unconfirmed").map(({ kind: _, ...o }) => o);
+        const handled = new Set(outcomes.flatMap((o) => ("product" in o ? [o.product] : [])));
+        const left = untagged.map((p) => p.name).filter((name) => !handled.has(name));
+        if (of("unavailable").length === outcomes.length) {
+          return { status: "knowledge_unavailable", hint: "The GST lookup didn't answer. Tell the owner to try again in a minute. Nothing was saved." };
+        }
+        return {
+          status: tagged.length ? "tagged" : "nothing_tagged",
+          tagged,
+          chooseRate,
+          unconfirmed,
+          alreadyTagged: of("already_tagged").map((o) => o.product),
+          notFound: of("not_found").map((o) => o.productName),
+          lookupFailed: of("unavailable").map((o) => o.product),
+          notInYourList: left,
+          hint: [
+            "Tell the owner briefly what was tagged (the receipt under your reply lists each one; say only the products in tagged were tagged).",
+            chooseRate.length ? "For each product in chooseRate, ask which description fits (usually loose or pre-packaged and labelled); on the answer, call setProductGst with its hsn and the chosen gstRate." : "",
+            unconfirmed.length
+              ? "For each product in unconfirmed, the best official entry for that description has another code: nothing was saved. officialFor lists what the entries say; if the first one is that product, call tagAllProducts again with its code, otherwise tell the owner you weren't sure of it."
+              : "",
+            left.length ? "notInYourList are still untagged: call tagAllProducts again for them." : "",
+            of("unavailable").length ? "For lookupFailed the GST lookup didn't answer: tell the owner to ask again in a minute." : "",
+          ]
+            .filter(Boolean)
+            .join(" "),
+        };
       },
     }),
 

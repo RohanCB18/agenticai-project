@@ -44,6 +44,33 @@ export function coversHsn(entry: GstPassage, code: string) {
   return entryHsnCodes(entry.hsn).some((c) => code.startsWith(c) || c.startsWith(code));
 }
 
+// Dal by its everyday names. The corpus's common names (knowledge/gst/common_names.json) gave whole
+// pulses (0713) only "chana dal" and "dried lentils", and dal flour (1106) "pulse flour": live,
+// "Toor dal" found jaggery and "pulses split" found dal flour. Searched with the official wording too.
+const PULSES = /\b(?:dal|daal|dhal|toor|tuvar|tur|arhar|moong|mung|urad|masoor|chana|rajma|lobia|pulses?|lentils?)\b/i;
+const FLOUR = /\b(?:flour|besan|aata|atta|powder|meal|husk)\b/i;
+
+/** The query as searched: dal and pulses also by the official words for them, unless it's their flour. */
+export function withOfficialWording(query: string) {
+  return PULSES.test(query) && !FLOUR.test(query) ? `${query} (dried leguminous vegetables, shelled, split)` : query;
+}
+
+// "Rice, pre-packaged and labelled" and "Rice, other than pre-packaged and labelled" are the same goods.
+const PACKAGING = /\b(?:other than )?pre-?packaged and labell?ed\b/g;
+const goodsWords = (text: string | null) => new Set((text ?? "").toLowerCase().replace(PACKAGING, " ").match(/[a-z]+/g) ?? []);
+
+/**
+ * True when two entries describe the same goods, told apart only by packing: loose and packed toor
+ * dal, but not biscuits (1905) and plain roti (also 1905, exempt), or sugar and jaggery (both 1701).
+ */
+export function sameGoods(a: GstPassage, b: GstPassage) {
+  const x = goodsWords(a.description);
+  const y = goodsWords(b.description);
+  const shared = [...x].filter((word) => y.has(word)).length;
+  const all = new Set([...x, ...y]).size;
+  return all > 0 && shared / all >= 0.6;
+}
+
 /** One option per distinct official rate among entries, highest first, with the entry that sets it. */
 export function officialRates(entries: GstPassage[]): { rate: number; item: string | null; citation: string | null; url: string | null }[] {
   const byRate = new Map<number, GstPassage>();

@@ -357,6 +357,7 @@ describe("specialist desks", () => {
       "setProductGst",
       "setReorderLevel",
       "supplierDues",
+      "tagAllProducts",
       "updateStock",
     ]);
     expect(seen[0]?.instructions).toContain("stock desk");

@@ -65,6 +65,8 @@ export function receiptLines(actions: Action[]): string[] {
         return [output.alertAt ? `🧾 Alert: ${s(output.product)} at ${s(output.alertAt)} (now ${s(output.stock)})` : `🧾 Alert removed: ${s(output.product)}`];
       case "setProductGst":
         return [`🧾 GST tag: ${s(output.product)} · HSN ${s(output.hsn)} · ${s(output.gst)}`];
+      case "tagAllProducts":
+        return ((output.tagged ?? []) as Record<string, unknown>[]).map((t) => `🧾 GST tag: ${s(t.product)} · HSN ${s(t.hsn)} · ${s(t.gst)}`);
       case "paySupplier":
         return [
           output.status === "paid"

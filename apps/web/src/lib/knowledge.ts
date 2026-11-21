@@ -1,5 +1,5 @@
 import "server-only";
-import type { GstPassage, KnowledgeBase, KnowledgeSource } from "@munshi/agents";
+import { type GstPassage, type KnowledgeBase, type KnowledgeSource, withOfficialWording } from "@munshi/agents";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { createAdminClient } from "@/lib/supabase/admin";
 
@@ -50,7 +50,8 @@ const PLACEHOLDER_VECTOR = JSON.stringify([1, ...Array<number>(DIMENSIONS - 1).f
 
 export function createSupabaseKnowledge({ db, embed }: { db: Pick<SupabaseClient, "rpc">; embed: Embed }): KnowledgeBase {
   return {
-    async searchGst(query, limit = 5) {
+    async searchGst(asked, limit = 5) {
+      const query = withOfficialWording(asked);
       let vector: string | null = null;
       try {
         vector = JSON.stringify(await embed(query));

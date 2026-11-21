@@ -1,5 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { GstPassage, KnowledgeBase } from "./knowledge";
+import { receiptLines } from "./receipts";
+import type { Product } from "./store";
 import { MemoryStore } from "./testing/memory-store";
 import { createKhataTools } from "./tools";
 
@@ -364,6 +366,97 @@ describe("setProductGst", () => {
       ["Maggi", { hsn: "1902", rate: "5%" }],
       ["Sona Masoori Rice", "not tagged"],
     ]);
+  });
+});
+
+describe("tagAllProducts", () => {
+  const source = { id: "ctr-09-2025", title: "Notification No. 9/2025-Central Tax (Rate)", gsr: "G.S.R. 641(E)", dated: "2025-09-17", effectiveFrom: "2025-09-22", url: "https://example.test/9.pdf" };
+  const entry = (id: string, hsn: string, gst: number, sno: string, description: string): GstPassage => ({
+    id,
+    kind: gst === 0 ? "exempt" : "rate",
+    hsn,
+    description,
+    gst,
+    content: `${description}. HSN ${hsn}. Schedule I, S. No. ${sno} of Notification No. 9/2025-Central Tax (Rate).`,
+    sources: [source],
+  });
+  const sugar = entry("r:105", "1701", 5, "105", "Cane or beet sugar and chemically pure sucrose, in solid form");
+  const jaggery = entry("e:jaggery", "1701", 0, "94", "Jaggery of all types including Cane Jaggery (gur), other than pre-packaged and labelled");
+  const packedDal = entry("r:20", "0713", 5, "20", "Dried leguminous vegetables, shelled, whether or not skinned or split, pre-packaged and labelled");
+  const looseDal = entry("e:39", "0713", 0, "39", "Dried leguminous vegetables, shelled, whether or not skinned or split, other than pre-packaged and labelled");
+  const biscuits = entry("r:123", "1905", 5, "123", "Pastry, cakes, biscuits and other bakers' wares");
+  const roti = entry("e:roti", "1905", 0, "100", "Khakhra, plain chapatti or roti");
+  // A search by what the goods are, as the real one does: the code in the query brings its entries.
+  const knowledge: KnowledgeBase = {
+    searchGst: vi.fn(async (query: string) => {
+      if (/sugar/i.test(query)) return [sugar, jaggery];
+      if (/pulses/i.test(query)) return [packedDal, looseDal];
+      if (/biscuit/i.test(query)) return [biscuits, roti];
+      return [];
+    }),
+  };
+  const product = (id: string, name: string, extra: Partial<Product> = {}): Product => ({ id, name, aliases: [], unit: "kg", stockQty: 10, reorderLevel: null, pricePaise: null, ...extra });
+  let bulk: ReturnType<typeof createKhataTools>["tagAllProducts"];
+
+  beforeEach(() => {
+    store.products.push(
+      product("p1", "Sugar"),
+      product("p2", "Toor dal"),
+      product("p3", "Parle G", { unit: "box" }),
+      product("p4", "Rice", { hsn: "1006", gstRate: 5, gstCitation: "S. No. 48" }),
+      product("p5", "Sunflower oil", { unit: "ltr" }),
+    );
+    bulk = createKhataTools(store, "S", { knowledge }).tagAllProducts;
+  });
+
+  it("lists the untagged products first, and tags nothing", async () => {
+    expect(await bulk.execute!({ products: [] }, ctx)).toMatchObject({ status: "untagged_products", products: ["Sugar", "Toor dal", "Parle G", "Sunflower oil"] });
+    expect(store.products.filter((p) => p.hsn)).toHaveLength(1);
+  });
+
+  it("tags what the official entries confirm, asks loose or packed, and refuses a code the goods don't carry", async () => {
+    const out = (await bulk.execute!(
+      {
+        products: [
+          { productName: "sugar", hsn: "1701", goods: "sugar" }, // jaggery shares 1701 at 0%, but isn't sugar
+          { productName: "toor dal", hsn: "0713", goods: "pulses, split" },
+          { productName: "Parle G", hsn: "1704", goods: "biscuits" }, // wrong code: biscuits are 1905
+          { productName: "Rice", hsn: "1006", goods: "rice" },
+          { productName: "Spaceship", hsn: "8802", goods: "spaceship" },
+        ],
+      },
+      ctx,
+    )) as Record<string, unknown>;
+
+    expect(out).toMatchObject({
+      status: "tagged",
+      tagged: [{ product: "Sugar", hsn: "1701", gst: "5%", citation: "Schedule I, S. No. 105 of Notification No. 9/2025-Central Tax (Rate)" }],
+      chooseRate: [{ product: "Toor dal", hsn: "0713", options: [{ gst: "5%", gstRate: 5 }, { gst: "0%", gstRate: 0 }] }],
+      unconfirmed: [{ product: "Parle G", hsn: "1704", officialFor: [{ hsn: "1905" }, { hsn: "1905" }] }],
+      alreadyTagged: ["Rice"],
+      notFound: ["Spaceship"],
+      notInYourList: ["Sunflower oil"],
+    });
+    expect(store.products.find((p) => p.name === "Sugar")).toMatchObject({ hsn: "1701", gstRate: 5 });
+    for (const name of ["Toor dal", "Parle G", "Sunflower oil"]) expect(store.products.find((p) => p.name === name)?.hsn).toBeUndefined();
+    expect(receiptLines([{ tool: "tagAllProducts", output: out }])).toEqual(["🧾 GST tag: Sugar · HSN 1701 · 5%"]);
+  });
+
+  it("keeps a single rate when a different good shares the code", async () => {
+    const out = await bulk.execute!({ products: [{ productName: "Parle G", hsn: "1905", goods: "biscuits" }] }, ctx);
+    expect(out).toMatchObject({ status: "tagged", tagged: [{ product: "Parle G", gst: "5%" }], chooseRate: [] });
+  });
+
+  it("says when everything is tagged, or the lookup is down", async () => {
+    for (const p of store.products) p.hsn = p.hsn ?? "1006";
+    expect(await bulk.execute!({ products: [] }, ctx)).toMatchObject({ status: "all_tagged" });
+
+    for (const p of store.products) p.hsn = undefined;
+    const quiet = vi.spyOn(console, "error").mockImplementation(() => {});
+    const down = createKhataTools(store, "S", { knowledge: { searchGst: async () => Promise.reject(new Error("503")) } }).tagAllProducts;
+    expect(await down.execute!({ products: [{ productName: "Sugar", hsn: "1701", goods: "sugar" }] }, ctx)).toMatchObject({ status: "knowledge_unavailable" });
+    quiet.mockRestore();
+    expect(store.products.every((p) => !p.hsn)).toBe(true);
   });
 });
 

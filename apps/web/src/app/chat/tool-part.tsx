@@ -25,6 +25,7 @@ const LABELS: Record<string, string> = {
   updateStock: "Stock change",
   setReorderLevel: "Low-stock alert",
   setProductGst: "GST tag",
+  tagAllProducts: "GST tags",
   sendPaymentLink: "UPI payment link",
   askSupplierQuote: "Wholesaler quote",
   placeSupplierOrder: "Wholesaler order",
@@ -128,7 +129,9 @@ export function ToolPart({ part, onDecision }: { part: Part; onDecision: Decide 
   }
   if (part.state !== "output-available") return null;
   // A saved change appears as its receipt under the reply, worded as on Telegram.
-  if (receiptLines(completedActionsInParts([part])).length > 0) return null;
+  // Except tagging in bulk that left choices for the owner: those still need showing.
+  const choices = name === "tagAllProducts" && Array.isArray((part.output as { chooseRate?: unknown[] }).chooseRate) && (part.output as { chooseRate: unknown[] }).chooseRate.length > 0;
+  if (receiptLines(completedActionsInParts([part])).length > 0 && !choices) return null;
 
   const out = part.output as Record<string, unknown>;
   return (
@@ -359,6 +362,33 @@ function Output({ name, out }: { name: string; out: Record<string, unknown> }) {
             </li>
           ))}
         </ul>
+      </div>
+    );
+  }
+
+  if (name === "tagAllProducts") {
+    if (out.status === "untagged_products") return <p>Not tagged yet: {(out.products as string[]).join(", ")}</p>;
+    if (out.status === "all_tagged") return <p>Every product is tagged.</p>;
+    const choose = (out.chooseRate ?? []) as { product: string; hsn: string; options: { gst: string; item: string | null }[] }[];
+    const unsure = (out.unconfirmed ?? []) as { product: string }[];
+    return (
+      <div className="flex flex-col gap-3">
+        {choose.map((c) => (
+          <div key={c.product} className="flex flex-col gap-1">
+            <p>
+              {c.product}, HSN {c.hsn}: which fits?
+            </p>
+            <ul className="flex flex-col gap-1">
+              {c.options.map((o) => (
+                <li key={o.gst} className="flex justify-between gap-4">
+                  <span className="line-clamp-2">{o.item}</span>
+                  <span className="shrink-0 font-mono font-medium tabular-nums">{o.gst}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        ))}
+        {unsure.length > 0 && <p className="text-muted">Not sure of the HSN code: {unsure.map((u) => u.product).join(", ")}</p>}
       </div>
     );
   }
