@@ -1,4 +1,9 @@
 import Link from "next/link";
+import { connection } from "next/server";
+import { Suspense } from "react";
+import { getCurrentMerchant } from "@/lib/auth";
+import { createClient } from "@/lib/supabase/server";
+import { loadWebChat } from "@/lib/web-chat";
 import { Chat } from "./chat";
 
 export default function ChatPage() {
@@ -13,7 +18,17 @@ export default function ChatPage() {
           Khata
         </Link>
       </header>
-      <Chat />
+      <Suspense fallback={<p className="flex-1 py-6 text-muted">Opening your chat…</p>}>
+        <SavedChat />
+      </Suspense>
     </main>
   );
+}
+
+/** The conversation as it was left, so a refresh or another device carries on from there. */
+async function SavedChat() {
+  await connection();
+  const merchant = await getCurrentMerchant();
+  const messages = await loadWebChat(await createClient(), merchant.id);
+  return <Chat initialMessages={messages} />;
 }

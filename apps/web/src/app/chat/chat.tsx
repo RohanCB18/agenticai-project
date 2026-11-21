@@ -4,6 +4,7 @@ import { useChat } from "@ai-sdk/react";
 import type { KhataUIMessage } from "@munshi/agents";
 import { lastAssistantMessageIsCompleteWithApprovalResponses } from "ai";
 import { useEffect, useRef, useState } from "react";
+import { startNewChat } from "./actions";
 import { footerFor, ReplyFooterView } from "./reply-footer";
 import { ToolPart } from "./tool-part";
 import { useVoice } from "./use-voice";
@@ -17,7 +18,7 @@ const SUGGESTIONS = [
   "Ramesh ko payment link bhejo",
 ];
 
-export function Chat() {
+export function Chat({ initialMessages = [] }: { initialMessages?: KhataUIMessage[] }) {
   const [input, setInput] = useState("");
   const bottomRef = useRef<HTMLDivElement>(null);
   // Set while the owner is talking rather than typing: replies are spoken back in this language.
@@ -25,7 +26,9 @@ export function Chat() {
   // How much of each assistant message has already been spoken, so approval continuations speak only the new part.
   const spoken = useRef<{ id: string; length: number } | null>(null);
 
-  const { messages, sendMessage, addToolApprovalResponse, status, error } = useChat<KhataUIMessage>({
+  const { messages, setMessages, sendMessage, addToolApprovalResponse, status, error } = useChat<KhataUIMessage>({
+    // The saved conversation (web_chat_threads); the server saves it again after every reply.
+    messages: initialMessages,
     // After the owner approves or denies, continue the agent automatically.
     sendAutomaticallyWhen: lastAssistantMessageIsCompleteWithApprovalResponses,
   });
@@ -69,6 +72,20 @@ export function Chat() {
   return (
     <>
       <div className="flex flex-1 flex-col gap-4 overflow-y-auto py-6" aria-live="polite">
+        {messages.length > 0 && (
+          <button
+            type="button"
+            disabled={busy}
+            onClick={async () => {
+              voice.stopSpeaking();
+              await startNewChat();
+              setMessages([]);
+            }}
+            className="self-end text-sm text-muted underline-offset-4 hover:underline disabled:opacity-50"
+          >
+            New chat
+          </button>
+        )}
         {messages.length === 0 && (
           <div className="flex flex-col gap-3">
             <p className="text-muted">Tap the mic and speak, or try one of these, in any language:</p>

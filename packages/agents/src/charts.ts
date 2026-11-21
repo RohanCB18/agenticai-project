@@ -4,7 +4,10 @@ import type { Customer, LedgerEntry, Product } from "./store";
 // isolated sandbox (no network, no secrets) over CSV exports of the khata, and sends the owner the
 // picture. Numbers come from the files, never from the model.
 
-export type ChartResult = { ok: true; png: Uint8Array; stdout: string } | { ok: false; error: string };
+export type ChartResult = { ok: true; png: Uint8Array; stdout: string } | { ok: false; error: string; stdout?: string };
+
+/** What a chart program prints, instead of drawing, when there is nothing to show for the question. */
+export const NOTHING_TO_CHART = "NOTHING_TO_CHART";
 
 export interface ChartRunner {
   /** Runs `code` as chart.py next to `files` and returns the chart.png it saved, or why it failed. */
@@ -46,4 +49,6 @@ export function chartFiles(entries: LedgerEntry[], customers: Customer[], produc
 export const CHART_CODE_GUIDE = `A short Python 3 program using pandas and matplotlib (the Agg backend is already set). It reads these files from its working directory and saves one chart to chart.png:
 - ledger.csv: date (YYYY-MM-DD, India time), type (udhaar, payment, sale, expense, supplier_payment), amount (rupees), customer (empty for sales and expenses), note
 - stock.csv: product, stock, unit, reorder_at (empty if no alert)
-Use English labels and "Rs" for rupees: the font has no Indian scripts. One chart, figsize (8, 4.5), plt.tight_layout(), plt.savefig("chart.png", dpi=150). There is no internet. Finally print one line with the key numbers (totals, highest day), for your reply.`;
+In a kirana, goods given on credit are udhaar: for "sales", count both sale (cash) and udhaar (on credit), e.g. stacked bars per day, unless the owner says cash only.
+Use English labels and "Rs" for rupees: the font has no Indian scripts. One chart, figsize (8, 4.5), plt.tight_layout(), plt.savefig("chart.png", dpi=150). There is no internet. Finally print one line with the key numbers (totals, highest day), for your reply.
+If the rows for what was asked are empty, don't draw an empty chart: save nothing and print one line starting with ${NOTHING_TO_CHART}: and saying what is missing (e.g. "${NOTHING_TO_CHART}: no sales or udhaar this month").`;

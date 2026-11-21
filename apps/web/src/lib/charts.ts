@@ -38,8 +38,9 @@ export function createSandboxChartRunner(snapshotId: string): ChartRunner {
         const result = await sandbox.runCommand({ cmd: "python", args: ["chart.py"], cwd: WORKDIR, signal, timeoutMs: PROGRAM_TIMEOUT_MS });
         const [stdout, stderr] = await Promise.all([result.stdout(), result.stderr()]);
         if (result.exitCode !== 0) return { ok: false, error: stderr.trim().slice(-1500) || `The program stopped with exit code ${result.exitCode}.` };
-        const png = await sandbox.readFileToBuffer({ path: `${WORKDIR}/chart.png` }, { signal });
-        if (!png?.length) return { ok: false, error: "The program ran but didn't save chart.png." };
+        // No chart.png is how a program says there was nothing to draw (it printed why).
+        const png = await sandbox.readFileToBuffer({ path: `${WORKDIR}/chart.png` }, { signal }).catch(() => null);
+        if (!png?.length) return { ok: false, error: "The program ran but didn't save chart.png.", stdout: stdout.trim().slice(-600) };
         return { ok: true, png: new Uint8Array(png), stdout: stdout.trim().slice(-600) };
       } finally {
         await sandbox.stop().catch(() => {});

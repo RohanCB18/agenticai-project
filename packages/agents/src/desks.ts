@@ -59,8 +59,8 @@ const RULES = {
   stock: `Stock that arrived ("10 packet Maggi aaya") is updateStock with a positive change; stock sold or used up is a negative change. "Kya khatam ho raha hai?" means getStock. "Rice 10 kg pe alert karna" (tell me when rice is down to 10 kg) means setReorderLevel. Owners name items in their own language (akki, chawal, sakkare): check getStock before deciding a word is a customer's name.`,
   restock: `To restock, askSupplierQuote gets a quote from the wholesaler's agent (omit items to quote everything running low). Tell the owner the items, the total and the delivery slot, and what the wholesaler can't supply. Only after the owner says yes, call placeSupplierOrder; the owner then approves it with a button. Never state a price the quote didn't give.`,
   payout: `To pay a supplier or wholesaler ("Sharma Traders ko payment karo"), call supplierDues and tell the owner what is due and where it would go. Only after the owner says yes, call paySupplier with the amount; the owner then approves it with a button. If there is no verified account, tell the owner to add it in Munshi's dashboard: Munshi can never add or change where money goes. Never say money reached the supplier unless paySupplier returned paid.`,
-  portal: `If lookupGst finds no clear entry for an item, or the owner asks for an item's HSN code, call checkGstPortal: it looks it up on the official GST portal in the background. Tell the owner the answer will come in about a minute, and never guess an HSN code yourself.`,
-  chart: `For a chart or graph ("is mahine ki sale chart mein dikhao", "udhaar ka graph"), call makeChart with a short Python program that reads ledger.csv or stock.csv. If it returns chart_error, fix the program and call it again once. The picture goes to the owner by itself: reply with one sentence using only the numbers in its summary.`,
+  portal: `checkGstPortal looks an item up on the official GST portal in the background, in about a minute. Use it only when lookupGst found no clear entry for the item, or the owner asks for the portal. For an HSN code, call lookupGst first: its entries carry HSN codes. Never use the portal to tag a product ("HSN laga do"): that is lookupGst, then setProductGst. Never guess an HSN code yourself.`,
+  chart: `For a chart or graph ("is mahine ki sale chart mein dikhao", "udhaar ka graph"), call makeChart with a short Python program that reads ledger.csv or stock.csv. In a kirana, goods given on udhaar are sales too: unless the owner says cash only, a sales chart counts both. If it returns chart_error, fix the program and call it again once. If it returns nothing_to_chart, no picture was drawn: say so in one sentence. Otherwise the picture goes to the owner by itself: reply with one sentence using only the numbers in its summary.`,
   history: `For what a customer took or paid over a period ("Ramesh ne pichhle mahine kya liya?", "Fatima ne is hafte kitna diya?"), use customerHistory with the number of days (a week is 7, a month is 30). Answer from its entries and notes; never guess what they bought.`,
   customer: `To add or change an existing customer's mobile number ("Fatima ka number 98...") or fix their name, use updateCustomer. addCustomer is only for someone new.`,
   gst: `For GST questions ("Maggi pe kitna GST?", "atta pe GST lagta hai?"), call lookupGst with a generic English item name (Maggi is instant noodles, atta is wheat flour) and answer only from what it returns: the total GST, then the notification and S. No. it comes from. Loose and packed goods often differ; if the owner didn't say which, give both. If nothing fits, say you aren't sure and suggest their CA. Never state a GST rate from memory.`,
@@ -94,7 +94,7 @@ export const SPECIALISTS: Record<Exclude<Desk, "general">, Specialist> = {
     rules: [RULES.payment, RULES.link, RULES.qr, RULES.check, RULES.habits, RULES.history, RULES.customer, RULES.memory],
   },
   stock: {
-    purpose: "stock: what is left, what arrived, what sold, what is running low, reordering from and paying the wholesaler, and the GST on goods",
+    purpose: "stock: what is left, what arrived, what sold, what is running low, reordering from and paying the wholesaler, the GST on goods and tagging products with their HSN code and GST rate",
     // GST questions name a product ("Maggi pe kitna GST?"), so the router often sends them here.
     tools: ["getStock", "updateStock", "setReorderLevel", "setProductGst", "recordSale", "askSupplierQuote", "placeSupplierOrder", "supplierDues", "paySupplier", "lookupGst", "checkGstPortal", "makeChart", ...MEMORY_TOOLS],
     rules: [RULES.stock, RULES.restock, RULES.payout, RULES.gst, RULES.gstTag, RULES.portal, RULES.chart, RULES.memory],
@@ -114,6 +114,7 @@ const GENERAL_RULES = [
   RULES.restock,
   RULES.payout,
   RULES.gst,
+  RULES.gstTag,
   RULES.portal,
   RULES.chart,
   RULES.memory,
@@ -214,8 +215,8 @@ khata: udhaar given, money a customer handed over in cash, sales, expenses, who 
   "Suresh ne 300 ka samaan liya", "सुरेश ने 500 रुपये दिए", "Lakshmi 200 kottlu", "Kal 900 ka dhanda hua", "Dukaan ka kiraya 5000 diya", "Lakshmi ku evvalavu baaki?", "Suresh ne is mahine kya kya liya?", "Is mahine ki sale ka chart dikhao", "Lakshmi ka number 9876543210 hai"
 collections: getting paid over UPI: sending a payment link, showing a QR code, checking whether an online payment arrived, when a customer usually pays.
   "Suresh ko link bhej do", "Lakshmi ka QR banao", "Suresh ne online bheja kya?", "Lakshmi aam taur par kab paisa deti hai?"
-stock: how much of an item is left, stock that arrived or sold, what is running low, ordering more from the wholesaler, paying the wholesaler, GST on goods.
-  "Atta kitna hai?", "Sakkare eshtu ide?", "20 packet biscuit aaye", "Tel 2 litre bika", "Wholesaler se dal ka rate pucho", "Sharma Traders ko payment kar do", "Maggi pe kitna GST lagta hai?"
+stock: how much of an item is left, stock that arrived or sold, what is running low, ordering more from the wholesaler, paying the wholesaler, GST on goods, HSN codes, tagging a product with its HSN code and GST rate.
+  "Atta kitna hai?", "Sakkare eshtu ide?", "20 packet biscuit aaye", "Tel 2 litre bika", "Wholesaler se dal ka rate pucho", "Sharma Traders ko payment kar do", "Maggi pe kitna GST lagta hai?", "Rice ka HSN laga do", "Makhana ka HSN code kya hai?"
 general: greetings, thanks, remembering or recalling facts, anything else, or a message that needs more than one desk.
   "Hello ji", "Yaad rakhna, Suresh Monday ko aata hai", "Lakshmi kaun hai?"
 

@@ -1,9 +1,11 @@
-import { type Desk, MissingModelKeyError } from "@munshi/agents";
-import { createAgentUIStreamResponse } from "ai";
+import { type Desk, type KhataUIMessage, MissingModelKeyError } from "@munshi/agents";
+import { createAgentUIStreamResponse, createIdGenerator } from "ai";
 import { after } from "next/server";
 import { ApprovalSecretMissingError, buildKhataAgent } from "@/lib/agent";
+import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 import { flushTraces, traced } from "@/lib/telemetry";
+import { closeStaleApprovals, replySummary, saveWebChat } from "@/lib/web-chat";
 
 export const maxDuration = 60;
 
@@ -15,7 +17,8 @@ export async function POST(request: Request) {
   const { data: merchant } = await supabase.from("merchants").select("id, shop_name, preferred_language").single();
   if (!merchant) return Response.json({ error: "No shop found for this account." }, { status: 404 });
 
-  const { messages } = (await request.json()) as { messages: { role?: string; metadata?: { source?: string } }[] };
+  const body = (await request.json()) as { messages: KhataUIMessage[] };
+  const messages = closeStaleApprovals(body.messages);
   // The chat UI marks spoken messages; entries from them are logged with source "voice".
   const lastUser = messages.findLast((m) => m.role === "user");
   const source = lastUser?.metadata?.source === "voice" ? "voice" : "chat";
@@ -43,8 +46,17 @@ export async function POST(request: Request) {
     createAgentUIStreamResponse({
       agent: streamAgent,
       uiMessages: messages,
+      // Persistence mode: replies get stable ids, and onEnd hands back the whole conversation.
+      originalMessages: messages as never,
+      generateMessageId: createIdGenerator({ prefix: "msg", size: 16 }),
       // The chat shows which desk answered.
       messageMetadata: ({ part }) => (part.type === "finish" && desk ? { desk } : undefined),
+      // Saved so a refresh or another device opens the chat where it was left. The server's
+      // client: the owner was checked above, and the request's cookies may be gone by now.
+      onEnd: async ({ messages: updated, responseMessage, isAborted }) => {
+        console.info(`[munshi] chat run: ${desk ?? "?"} desk, ${replySummary(responseMessage as KhataUIMessage)}${isAborted ? " (stopped)" : ""}`);
+        await saveWebChat(createAdminClient(), merchant.id, updated as KhataUIMessage[]);
+      },
       // Tool and stream errors are masked as "An error occurred." by default. Log the real
       // cause, and show it in the chat during development so failures are debuggable.
       onError: (error) => {

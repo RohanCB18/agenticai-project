@@ -1,7 +1,7 @@
 import { formatINR, Language, rupeesToPaise } from "@munshi/db";
 import { type ModelMessage, tool } from "ai";
 import { z } from "zod";
-import { CHART_CODE_GUIDE, type ChartRunner, chartFiles } from "./charts";
+import { CHART_CODE_GUIDE, type ChartRunner, chartFiles, NOTHING_TO_CHART } from "./charts";
 import { paymentHabits } from "./habits";
 import { coversHsn, type GstPassage, gstCitation, type KnowledgeBase, officialRates } from "./knowledge";
 import { ownerWasAskedAboutRepeat } from "./threads";
@@ -728,7 +728,7 @@ export function createKhataTools(store: KhataStore, shopName = "your shop", opti
 
     checkGstPortal: tool({
       description:
-        "Look something up on the official GST portal with a web browser, such as an item's HSN code, when lookupGst found no clear entry or the owner asks for an HSN code. It runs in the background for about a minute, and Munshi messages the owner what the portal shows.",
+        "Look something up on the official GST portal with a web browser, such as an item's HSN code, only when lookupGst found no clear entry or the owner asks for the portal. Not for tagging a product: use lookupGst, then setProductGst. It runs in the background for about a minute, and Munshi messages the owner what the portal shows.",
       inputSchema: z.object({ question: z.string().min(5).max(200).describe("What to find, in English, e.g. 'What is the HSN code for makhana (fox nut)?'") }),
       execute: async ({ question }) => {
         if (!portal) return { status: "browsing_off", hint: "Tell the owner Munshi can't check the GST portal yet." };
@@ -766,6 +766,16 @@ export function createKhataTools(store: KhataStore, shopName = "your shop", opti
         } catch (error) {
           console.error("[munshi] chart sandbox failed:", error instanceof Error ? error.message : error);
           return { status: "chart_unavailable", hint: "The chart service didn't respond. Tell the owner to try again in a minute." };
+        }
+        // The program found nothing to draw for the question: say so, no empty picture.
+        const nothing = result.ok ? null : result.stdout?.match(new RegExp(`${NOTHING_TO_CHART}:?\\s*(.*)`));
+        if (nothing) {
+          return {
+            status: "nothing_to_chart",
+            days,
+            summary: nothing[1]?.trim() || "nothing to chart",
+            hint: "No picture was drawn. Tell the owner in one sentence what summary says. Don't call makeChart again for this.",
+          };
         }
         if (!result.ok) {
           return {

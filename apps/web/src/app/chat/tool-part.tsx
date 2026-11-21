@@ -310,6 +310,7 @@ function Output({ name, out }: { name: string; out: Record<string, unknown> }) {
     );
   }
   if (name === "makeChart" && out.status === "chart_error") return <p className="text-muted">Redrawing the chart…</p>;
+  if (name === "makeChart" && out.status === "nothing_to_chart") return <p className="text-muted">Nothing to draw: {String(out.summary)}</p>;
 
   if (name === "supplierDues" && out.status === "dues") {
     const orders = (out.unpaidOrders ?? []) as { orderId: string; amount: string; date: string }[];

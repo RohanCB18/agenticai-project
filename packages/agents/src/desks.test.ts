@@ -83,6 +83,17 @@ describe("desks", () => {
     expect(general).not.toContain("handOff");
   });
 
+  it("tag products with lookupGst and setProductGst at any desk that can, never through the portal", () => {
+    // Live, "Rice ka HSN laga do" went to the general desk, whose rules sent HSN questions to the portal.
+    for (const desk of ["general", "stock"] as const) {
+      const rules = deskInstructions(desk, "Test", "hi");
+      expect(rules).toContain("then call setProductGst");
+      expect(rules).toContain("Never use the portal to tag a product");
+      expect(rules).not.toContain("or the owner asks for an item's HSN code, call checkGstPortal");
+    }
+    expect(deskTools("general", true)).toContain("setProductGst");
+  });
+
   it("offer a hand-off only before one has happened", () => {
     expect(deskTools("stock", true)).toContain("handOff");
     expect(deskTools("stock", false)).not.toContain("handOff");

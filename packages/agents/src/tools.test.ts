@@ -452,6 +452,15 @@ describe("makeChart", () => {
     expect(store.charts).toHaveLength(0);
   });
 
+  it("sends no empty picture when the program finds nothing to draw", async () => {
+    await tools.recordCredit.execute!({ customerName: "Fatima", amount: 450 }, ctx);
+    const empty = createKhataTools(store, "S", {
+      charts: { run: async () => ({ ok: false, error: "The program ran but didn't save chart.png.", stdout: "NOTHING_TO_CHART: no cash sales this month" }) },
+    });
+    expect(await empty.makeChart.execute!({ title: "Cash sales", days: 30, code }, ctx)).toMatchObject({ status: "nothing_to_chart", summary: "no cash sales this month" });
+    expect(store.charts).toHaveLength(0);
+  });
+
   it("says when charts are off or there is nothing to chart", async () => {
     expect(await tools.makeChart.execute!({ title: "Sales", days: 7, code }, ctx)).toMatchObject({ status: "charts_off" });
     const charted = createKhataTools(store, "S", { charts: { run: async () => ({ ok: true, png, stdout: "" }) } });
