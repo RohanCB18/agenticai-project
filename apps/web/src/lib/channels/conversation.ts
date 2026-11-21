@@ -3,12 +3,11 @@ import {
   approvalResponse,
   claimsUnbackedAction,
   EMPTY_REPLY_NOTE,
-  missedEntry,
   NOT_RECORDED,
   closePendingApprovals,
   completedActions,
   NOTHING_SAVED,
-  receiptLines,
+  replyFooter,
   UNBACKED_CLAIM_NOTE,
   type PendingApproval,
   pendingApprovals,
@@ -179,13 +178,13 @@ export async function handleInbound(inbound: Inbound, sender: ChannelSender) {
   await admin.from("agent_threads").upsert({ merchant_id: merchant.id, channel, messages, updated_at: new Date().toISOString() });
 
   // New payment links: make sure the owner gets the link, with a button to pass it on.
-  // Receipts come from the tools' own output, so the owner can tell what was really saved.
-  const receipts = receiptLines(completedActions(responseMessages));
-  let reply = receipts.length && text ? `${text}\n\n${receipts.join("\n")}` : text;
-  // The owner said money or goods changed hands, nothing was saved, and the reply doesn't ask why.
-  if (pendingApprovals(messages).length === 0 && missedEntry(ownerText, text, completedActions(responseMessages))) {
-    console.warn("[munshi] owner reported an entry but nothing was recorded:", ownerText);
-    reply = `${reply}\n\n${NOT_RECORDED}`;
+  // Receipts come from the tools' own output, so the owner can tell what was really saved. The web
+  // chat shows the same footer (replyFooter), built from the same tool results.
+  const footer = replyFooter({ ownerText, reply: text, actions: completedActions(responseMessages), awaitingApproval: pendingApprovals(messages).length > 0 });
+  let reply = footer.receipts.length && text ? `${text}\n\n${footer.receipts.join("\n")}` : text;
+  if (footer.notice) {
+    if (footer.notice === NOT_RECORDED) console.warn("[munshi] owner reported an entry but nothing was recorded:", ownerText);
+    reply = `${reply}\n\n${footer.notice}`;
   }
   const buttons: LinkButton[] = [];
   for (const output of toolOutputs(responseMessages, "sendPaymentLink")) {

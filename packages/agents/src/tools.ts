@@ -3,7 +3,7 @@ import { type ModelMessage, tool } from "ai";
 import { z } from "zod";
 import { CHART_CODE_GUIDE, type ChartRunner, chartFiles } from "./charts";
 import { paymentHabits } from "./habits";
-import type { GstPassage, KnowledgeBase } from "./knowledge";
+import { coversHsn, type GstPassage, gstCitation, type KnowledgeBase, officialRates } from "./knowledge";
 import { ownerWasAskedAboutRepeat } from "./threads";
 import { rankByName } from "./match";
 import { rankProducts, tooClose } from "./staples";
@@ -109,17 +109,13 @@ const LEDGER_LABELS: Record<string, string> = { credit_given: "udhaar", payment_
 /** "12 Oct 2026" in India time: the day the owner would say, not the UTC one. */
 const indianDate = (iso: string) => new Date(iso).toLocaleDateString("en-IN", { timeZone: "Asia/Kolkata", day: "numeric", month: "short", year: "numeric" });
 
-// "Schedule I, S. No. 48 of Notification No. 9/2025-Central Tax (Rate)", or the List form.
-const CITATION =
-  /(?:Schedule [IVX]+, )?S\. No\. [0-9A-Z]+ of Notification No\. \d+\/\d{4}-Central Tax \(Rate\)|List \d+ \[See S\. No\. \d+ of Schedule [IVX]+\] of Notification No\. \d+\/\d{4}-Central Tax \(Rate\)/;
-
 /** One GST entry for the model: the total rate, the official text it comes from, and where to read it. */
 function gstEntry(p: GstPassage) {
   return {
     item: p.description,
     hsn: p.hsn,
     ...(p.gst === null ? {} : { gst: p.gst === 0 ? "0% (exempt)" : `${p.gst}%` }),
-    citation: p.content.match(CITATION)?.[0] ?? p.sources[0]?.title ?? null,
+    citation: gstCitation(p),
     officialText: p.content,
     sources: p.sources.map((s) => ({ notification: s.title, inForceFrom: s.effectiveFrom, url: s.url })),
   };
@@ -340,6 +336,8 @@ export function createKhataTools(store: KhataStore, shopName = "your shop", opti
             stock: `${p.stockQty} ${p.unit}`,
             reorderAt: p.reorderLevel === null ? null : `${p.reorderLevel} ${p.unit}`,
             low: p.reorderLevel !== null && p.stockQty <= p.reorderLevel,
+            // The product's GST tag, when it has one ("not tagged" otherwise: setProductGst sets it).
+            gst: p.hsn ? { hsn: p.hsn, rate: p.gstRate == null ? "not chosen yet" : `${p.gstRate}%` } : "not tagged",
           })),
         };
       },
@@ -380,6 +378,55 @@ export function createKhataTools(store: KhataStore, shopName = "your shop", opti
           stock: `${product.stockQty} ${product.unit}`,
           low: product.reorderLevel !== null && product.stockQty <= product.reorderLevel,
         };
+      },
+    }),
+
+    setProductGst: tool({
+      description:
+        "Tag a product with its HSN code and GST rate, the base for GST bills. Take the HSN code from lookupGst's entries or the supplier's bill. The rate always comes from the official entries for that code, never from you: if they allow more than one (often loose vs pre-packaged and labelled), the tool lists them; ask the owner which fits and call again with gstRate.",
+      inputSchema: z.object({
+        productName: z.string(),
+        hsn: z
+          .string()
+          .regex(/^\d{4}(\s?\d{2}){0,2}$/, "4, 6 or 8 digits")
+          .describe("HSN code, e.g. 1902 or 0713 10 00"),
+        gstRate: z.number().min(0).max(40).optional().describe("Only after the owner chose between the official rates the tool listed"),
+      }),
+      execute: async ({ productName, hsn, gstRate }) => {
+        if (!knowledge) return { status: "no_knowledge", hint: "Tell the owner GST lookups aren't set up in Munshi yet." };
+        const matches = rankProducts(productName, await store.listProducts());
+        const [match] = matches;
+        if (!match) return { status: "product_not_found", productName };
+        if (tooClose(matches)) return { status: "ambiguous_product", candidates: matches.slice(0, 3).map((m) => m.item.name), hint: "Ask the owner which product." };
+
+        const code = hsn.replace(/\s/g, "");
+        let entries: GstPassage[];
+        try {
+          entries = await knowledge.searchGst(`${code} ${match.item.name}`, 10);
+        } catch (error) {
+          console.error("[munshi] GST lookup failed:", error instanceof Error ? error.message : error);
+          return { status: "knowledge_unavailable", hint: "The GST lookup didn't answer. Tell the owner to try again in a minute." };
+        }
+        const rates = officialRates(entries.filter((entry) => coversHsn(entry, code)));
+        const options = rates.map((r) => ({ gst: `${r.rate}%`, gstRate: r.rate, item: r.item, citation: r.citation }));
+        if (rates.length === 0) {
+          return { status: "not_found", hsn: code, hint: "No official entry has this HSN code. Check it with lookupGst or the supplier's bill. Nothing was saved." };
+        }
+        const chosen = gstRate === undefined ? (rates.length === 1 ? rates[0] : undefined) : rates.find((r) => Math.abs(r.rate - gstRate) < 0.001);
+        if (gstRate !== undefined && !chosen) {
+          return { status: "rate_not_official", product: match.item.name, hsn: code, options, hint: "That rate isn't an official rate for this code. Nothing was saved. Use one of these." };
+        }
+        if (!chosen) {
+          return {
+            status: "choose_rate",
+            product: match.item.name,
+            hsn: code,
+            options,
+            hint: "The official rate depends on the goods. Nothing was saved yet. Ask the owner which description fits (often loose or pre-packaged and labelled), then call again with that gstRate.",
+          };
+        }
+        const product = await store.setProductGst(match.item.id, { hsn: code, gstRate: chosen.rate, citation: chosen.citation });
+        return { status: "tagged", product: product.name, hsn: code, gst: `${chosen.rate}%`, citation: chosen.citation };
       },
     }),
 

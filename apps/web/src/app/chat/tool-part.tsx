@@ -1,26 +1,30 @@
 "use client";
 
 import type { KhataUIMessage } from "@munshi/agents";
+import { completedActionsInParts, receiptLines } from "@munshi/agents/receipts";
 
 type Part = Extract<KhataUIMessage["parts"][number], { type: `tool-${string}` }>;
 type Decide = (response: { id: string; approved: boolean; reason?: string }) => void;
 
+// Labels name the tool, not an outcome: a card is shown while it runs, or when it didn't save
+// (a possible repeat, an unknown customer). What was saved shows once, as a receipt under the reply.
 const LABELS: Record<string, string> = {
   findCustomer: "Looking up customer",
   showPaymentQr: "UPI QR",
-  remember: "Remembered",
+  remember: "Remembering",
   recall: "Memory",
-  forget: "Forgotten",
+  forget: "Forgetting",
   paymentHabits: "Payment habits",
   checkPayment: "Payment check",
   addCustomer: "Adding customer",
-  recordCredit: "Udhaar recorded",
-  recordPayment: "Payment recorded",
-  recordSale: "Entry recorded",
+  recordCredit: "Udhaar",
+  recordPayment: "Payment",
+  recordSale: "Sale or expense",
   getBalances: "Dues",
   getStock: "Stock",
-  updateStock: "Stock updated",
+  updateStock: "Stock change",
   setReorderLevel: "Low-stock alert",
+  setProductGst: "GST tag",
   sendPaymentLink: "UPI payment link",
   askSupplierQuote: "Wholesaler quote",
   placeSupplierOrder: "Wholesaler order",
@@ -28,7 +32,7 @@ const LABELS: Record<string, string> = {
   makeChart: "Chart",
   checkGstPortal: "GST portal",
   paySupplier: "Supplier payment",
-  updateCustomer: "Customer updated",
+  updateCustomer: "Customer details",
   customerHistory: "Khata history",
   lookupGst: "GST (official rates)",
 };
@@ -123,6 +127,8 @@ export function ToolPart({ part, onDecision }: { part: Part; onDecision: Decide 
     return <p className="rounded-md bg-danger-soft px-3 py-2 text-sm text-danger">{label} failed: {part.errorText}</p>;
   }
   if (part.state !== "output-available") return null;
+  // A saved change appears as its receipt under the reply, worded as on Telegram.
+  if (receiptLines(completedActionsInParts([part])).length > 0) return null;
 
   const out = part.output as Record<string, unknown>;
   return (
@@ -212,7 +218,7 @@ function Output({ name, out }: { name: string; out: Record<string, unknown> }) {
     );
   }
 
-  if (name === "forget") return <p>{out.status === "forgotten" ? "Done." : "That fact wasn't found."}</p>;
+  if (name === "forget") return <p>That fact wasn&apos;t found.</p>;
 
   if (name === "paymentHabits" && out.status === "habits") {
     return (
@@ -290,16 +296,6 @@ function Output({ name, out }: { name: string; out: Record<string, unknown> }) {
     );
   }
 
-  if (name === "updateCustomer" && out.status === "updated") {
-    return (
-      <p>
-        {String(out.customer)}
-        {out.previousName ? ` (was ${String(out.previousName)})` : ""}
-        {out.phone ? ` · phone ${String(out.phone)}` : ""}
-      </p>
-    );
-  }
-
   if (name === "checkGstPortal" && out.status === "checking_portal") {
     return <p>Checking the official GST portal. The answer comes on Telegram in about a minute.</p>;
   }
@@ -333,22 +329,6 @@ function Output({ name, out }: { name: string; out: Record<string, unknown> }) {
     );
   }
 
-  if (name === "paySupplier" && (out.status === "paid" || out.status === "payout_started")) {
-    return (
-      <p>
-        {String(out.amount)} to {String(out.supplier)} ({String(out.to)}): {out.status === "paid" ? `paid${out.utr ? `, UTR ${String(out.utr)}` : ""}` : "on its way"}
-      </p>
-    );
-  }
-
-  if (name === "placeSupplierOrder" && out.status === "ordered") {
-    return (
-      <p>
-        Order {String(out.orderId)} with {String(out.supplier)}: {String(out.total)}, delivery {String(out.deliverySlot)}
-      </p>
-    );
-  }
-
   if (name === "sendPaymentLink" && out.status === "sent") {
     return (
       <div className="flex flex-col gap-1">
@@ -362,13 +342,23 @@ function Output({ name, out }: { name: string; out: Record<string, unknown> }) {
     );
   }
 
-  if (out.status === "recorded" && out.customer) {
+  if (name === "setProductGst" && Array.isArray(out.options)) {
+    const options = out.options as { gst: string; item: string | null; citation: string | null }[];
     return (
-      <p>
-        {String(out.customer)}: {String(out.amount)}
-        {out.nowOwes ? ` · now owes ${String(out.nowOwes)}` : ""}
-        {out.advance ? ` (${String(out.advance)} advance)` : ""}
-      </p>
+      <div className="flex flex-col gap-1">
+        <p>
+          Official rates for HSN {String(out.hsn)}
+          {out.product ? ` (${String(out.product)})` : ""}:
+        </p>
+        <ul className="flex flex-col gap-1">
+          {options.map((o) => (
+            <li key={o.gst} className="flex justify-between gap-4">
+              <span className="line-clamp-2">{o.item}</span>
+              <span className="shrink-0 font-mono font-medium tabular-nums">{o.gst}</span>
+            </li>
+          ))}
+        </ul>
+      </div>
     );
   }
 

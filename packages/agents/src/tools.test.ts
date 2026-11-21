@@ -303,6 +303,70 @@ describe("lookupGst", () => {
   });
 });
 
+describe("setProductGst", () => {
+  const source = { id: "ctr-09-2025", title: "Notification No. 9/2025-Central Tax (Rate)", gsr: "G.S.R. 641(E)", dated: "2025-09-17", effectiveFrom: "2025-09-22", url: "https://example.test/9.pdf" };
+  const entry = (id: string, hsn: string, gst: number, sno: string, description: string): GstPassage => ({
+    id,
+    kind: gst === 0 ? "exempt" : "rate",
+    hsn,
+    description,
+    gst,
+    content: `${description}. HSN ${hsn}. Schedule I, S. No. ${sno} of Notification No. 9/2025-Central Tax (Rate).`,
+    sources: [source],
+  });
+  const noodles = entry("r:119", "1902", 5, "119", "Pasta, noodles");
+  const looseRice = entry("e:rice", "1006", 0, "60", "Rice, other than pre-packaged and labelled");
+  const packedRice = entry("r:rice", "1006", 5, "61", "Rice, pre-packaged and labelled");
+  const horses = entry("r:1", "0101 21 00", 5, "1", "Live horses"); // a search can return unrelated entries
+  const kb = (passages: GstPassage[]): KnowledgeBase => ({ searchGst: vi.fn(async () => [...passages, horses]) });
+
+  beforeEach(() => {
+    store.products.push(
+      { id: "p1", name: "Maggi", aliases: [], unit: "pkt", stockQty: 40, reorderLevel: null, pricePaise: null },
+      { id: "p2", name: "Sona Masoori Rice", aliases: ["akki"], unit: "kg", stockQty: 25, reorderLevel: null, pricePaise: null },
+    );
+  });
+
+  it("tags a product with the one official rate for its code, and the entry it comes from", async () => {
+    const knowledge = kb([noodles]);
+    const out = await createKhataTools(store, "S", { knowledge }).setProductGst.execute!({ productName: "maggi", hsn: "1902" }, ctx);
+    expect(knowledge.searchGst).toHaveBeenCalledWith("1902 Maggi", 10);
+    expect(out).toEqual({ status: "tagged", product: "Maggi", hsn: "1902", gst: "5%", citation: "Schedule I, S. No. 119 of Notification No. 9/2025-Central Tax (Rate)" });
+    expect(store.products[0]).toMatchObject({ hsn: "1902", gstRate: 5, gstCitation: "Schedule I, S. No. 119 of Notification No. 9/2025-Central Tax (Rate)" });
+  });
+
+  it("lists the official rates when the goods decide, and saves only the one the owner chose", async () => {
+    const tool = createKhataTools(store, "S", { knowledge: kb([looseRice, packedRice]) }).setProductGst;
+    const ask = (await tool.execute!({ productName: "akki", hsn: "1006 30" }, ctx)) as { status: string; options: { gst: string }[] };
+    expect(ask.status).toBe("choose_rate");
+    expect(ask.options.map((o) => o.gst)).toEqual(["5%", "0%"]);
+    expect(store.products[1]?.hsn).toBeUndefined();
+
+    expect(await tool.execute!({ productName: "akki", hsn: "1006 30", gstRate: 18 }, ctx)).toMatchObject({ status: "rate_not_official" });
+    expect(store.products[1]?.hsn).toBeUndefined();
+
+    expect(await tool.execute!({ productName: "akki", hsn: "1006 30", gstRate: 5 }, ctx)).toMatchObject({ status: "tagged", hsn: "100630", gst: "5%" });
+    expect(store.products[1]).toMatchObject({ hsn: "100630", gstRate: 5 });
+  });
+
+  it("saves nothing for a code no entry covers, an unknown product, or without the knowledge base", async () => {
+    const tools = createKhataTools(store, "S", { knowledge: kb([noodles]) });
+    expect(await tools.setProductGst.execute!({ productName: "Maggi", hsn: "9999" }, ctx)).toMatchObject({ status: "not_found" });
+    expect(await tools.setProductGst.execute!({ productName: "Spaceship", hsn: "1902" }, ctx)).toMatchObject({ status: "product_not_found" });
+    expect(await createKhataTools(store).setProductGst.execute!({ productName: "Maggi", hsn: "1902" }, ctx)).toMatchObject({ status: "no_knowledge" });
+    expect(store.products[0]?.hsn).toBeUndefined();
+  });
+
+  it("shows each product's tag in getStock", async () => {
+    await createKhataTools(store, "S", { knowledge: kb([noodles]) }).setProductGst.execute!({ productName: "Maggi", hsn: "1902" }, ctx);
+    const out = (await tools.getStock.execute!({ lowOnly: false }, ctx)) as { products: { name: string; gst: unknown }[] };
+    expect(out.products.map((p) => [p.name, p.gst])).toEqual([
+      ["Maggi", { hsn: "1902", rate: "5%" }],
+      ["Sona Masoori Rice", "not tagged"],
+    ]);
+  });
+});
+
 describe("paying suppliers", () => {
   const order = (orderId: string, totalPaise: number) => ({
     supplier: "Sharma Traders",

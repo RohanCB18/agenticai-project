@@ -1,8 +1,27 @@
 import "server-only";
-import { type Bill, BillReadError, billSummary, checkBill, type PlannedItem, planBill, readBill } from "@munshi/agents";
+import {
+  type Bill,
+  billGstSummary,
+  billLineGstTag,
+  BillReadError,
+  billSummary,
+  checkBill,
+  compareBillGst,
+  type KnowledgeBase,
+  type OfficialRates,
+  officialRatesByHsn,
+  overchargeLine,
+  type PlannedItem,
+  planBill,
+  readBill,
+} from "@munshi/agents";
 import { rupeesToPaise } from "@munshi/db";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { ChannelSender, MessagingChannel } from "@/lib/channels/types";
+import { configuredKnowledge } from "@/lib/knowledge";
+
+/** The GST check is extra: past this, the bill goes to the owner without it. */
+const GST_CHECK_TIMEOUT_MS = 12_000;
 
 // Bill photos run outside the agent on purpose: bill text is untrusted, so it goes through this
 // code and the owner's buttons instead of the model's prompt.
@@ -40,8 +59,11 @@ export async function handleBillPhoto(db: SupabaseClient, sender: ChannelSender,
   const warnings = checkBill(bill);
   // In live testing a duplicate was approved with one tap despite a warning at the bottom, so a
   // repeat bill leads with the warning and its button says what it really does.
-  const duplicate = await alreadyApplied(db, merchantId, bill);
+  const [duplicate, official] = await Promise.all([alreadyApplied(db, merchantId, bill), lookUpHsnCodes(bill, configuredKnowledge())]);
   if (duplicate) warnings.unshift(DUPLICATE_WARNING);
+  const gst = official ? compareBillGst(bill, official) : null;
+  // Kept with the bill too, so an overcharge can be raised with the supplier later.
+  const gstWarnings = gst?.status === "checked" ? gst.overcharged.map((o) => `GST: ${overchargeLine(o)}`) : [];
 
   const { data: saved, error } = await db
     .from("bills")
@@ -51,15 +73,15 @@ export async function handleBillPhoto(db: SupabaseClient, sender: ChannelSender,
       bill_number: bill.billNumber,
       bill_date: bill.billDate,
       total_paise: bill.total === null ? null : rupeesToPaise(bill.total),
-      items: items.map(toStoredItem),
-      warnings,
+      items: items.map((item) => toStoredItem(item, official)),
+      warnings: [...warnings, ...gstWarnings],
       source: channel,
     })
     .select("id")
     .single();
   if (error || !saved) throw new Error(`Save bill failed: ${error?.message}`);
 
-  const summary = billSummary(bill, items, warnings);
+  const summary = billSummary(bill, items, warnings, billGstSummary(gst, bill.supplierName));
   await sender.sendApproval(
     chatId,
     duplicate ? `⚠️ ALREADY ADDED: you added this bill before. Adding it again doubles the stock.\n\n${summary}` : summary,
@@ -70,8 +92,45 @@ export async function handleBillPhoto(db: SupabaseClient, sender: ChannelSender,
 
 const DUPLICATE_WARNING = "This bill looks already added. Adding it again would double the stock.";
 
-function toStoredItem(item: PlannedItem) {
-  return { name: item.name, quantity: item.quantity, unit: item.unit, rate: item.rate, amount: item.amount, product_id: item.productId };
+/**
+ * A bill line as stored. `gst_official` (with its citation) is set only when the official entries
+ * for the line's HSN code agree on one rate: apply_bill copies it to a product with no tag yet.
+ */
+function toStoredItem(item: PlannedItem, official: Record<string, OfficialRates> | null) {
+  const tag = billLineGstTag(item.hsn, official);
+  return {
+    name: item.name,
+    quantity: item.quantity,
+    unit: item.unit,
+    rate: item.rate,
+    amount: item.amount,
+    product_id: item.productId,
+    hsn: item.hsn ?? null,
+    gst_rate: item.gstRate ?? null,
+    gst_official: tag.gstRate,
+    gst_citation: tag.citation,
+  };
+}
+
+/**
+ * The official rates for the bill's HSN codes, or null when they can't be looked up in time. A
+ * failed lookup never holds up the bill: the owner still gets it to approve, just without the
+ * GST note, and its products aren't tagged.
+ */
+async function lookUpHsnCodes(bill: Bill, knowledge: KnowledgeBase | undefined): Promise<Record<string, OfficialRates> | null> {
+  if (!knowledge || !bill.items.some((item) => item.hsn)) return null;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<null>((resolve) => (timer = setTimeout(() => resolve(null), GST_CHECK_TIMEOUT_MS)));
+  try {
+    const result = await Promise.race([officialRatesByHsn(bill, knowledge), timeout]);
+    if (result === null) console.warn("[munshi] bill HSN lookup timed out");
+    return result;
+  } catch (error) {
+    console.warn("[munshi] bill HSN lookup failed:", error instanceof Error ? error.message : error);
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 async function alreadyApplied(db: SupabaseClient, merchantId: string, bill: Bill) {

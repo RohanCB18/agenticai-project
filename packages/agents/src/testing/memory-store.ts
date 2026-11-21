@@ -136,6 +136,13 @@ export class MemoryStore implements KhataStore {
     return product;
   }
 
+  async setProductGst(productId: string, tag: { hsn: string; gstRate: number | null; citation: string | null }) {
+    const product = this.products.find((p) => p.id === productId);
+    if (!product) throw new Error(`No product ${productId}`);
+    Object.assign(product, { hsn: tag.hsn, gstRate: tag.gstRate, gstCitation: tag.citation });
+    return product;
+  }
+
   supplierOrders: (SupplierOrder & { quoteId: string })[] = [];
 
   async saveSupplierOrder(order: SupplierOrder & { quoteId: string }) {

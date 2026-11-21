@@ -4,6 +4,7 @@ import { useChat } from "@ai-sdk/react";
 import type { KhataUIMessage } from "@munshi/agents";
 import { lastAssistantMessageIsCompleteWithApprovalResponses } from "ai";
 import { useEffect, useRef, useState } from "react";
+import { footerFor, ReplyFooterView } from "./reply-footer";
 import { ToolPart } from "./tool-part";
 import { useVoice } from "./use-voice";
 
@@ -81,7 +82,7 @@ export function Chat() {
           </div>
         )}
 
-        {messages.map((message) => (
+        {messages.map((message, index) => (
           <div key={message.id} className={message.role === "user" ? "flex justify-end" : "flex flex-col gap-2"}>
             {message.parts.map((part, i) => {
               if (part.type === "text") {
@@ -100,6 +101,7 @@ export function Chat() {
               }
               return null;
             })}
+            {message.role === "assistant" && <ReplyFooterView footer={footerFor(messages, index, !(busy && index === messages.length - 1))} />}
             {message.role === "assistant" && message.metadata?.desk && message.metadata.desk !== "general" && (
               <p className="text-xs uppercase tracking-wider text-muted">{DESK_LABELS[message.metadata.desk]}</p>
             )}

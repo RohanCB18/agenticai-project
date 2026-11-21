@@ -30,6 +30,7 @@ const ALL_TOOLS: KhataToolName[] = [
   "getStock",
   "updateStock",
   "setReorderLevel",
+  "setProductGst",
   "sendPaymentLink",
   "showPaymentQr",
   "checkPayment",
@@ -63,6 +64,7 @@ const RULES = {
   history: `For what a customer took or paid over a period ("Ramesh ne pichhle mahine kya liya?", "Fatima ne is hafte kitna diya?"), use customerHistory with the number of days (a week is 7, a month is 30). Answer from its entries and notes; never guess what they bought.`,
   customer: `To add or change an existing customer's mobile number ("Fatima ka number 98...") or fix their name, use updateCustomer. addCustomer is only for someone new.`,
   gst: `For GST questions ("Maggi pe kitna GST?", "atta pe GST lagta hai?"), call lookupGst with a generic English item name (Maggi is instant noodles, atta is wheat flour) and answer only from what it returns: the total GST, then the notification and S. No. it comes from. Loose and packed goods often differ; if the owner didn't say which, give both. If nothing fits, say you aren't sure and suggest their CA. Never state a GST rate from memory.`,
+  gstTag: `To tag a product for GST bills ("Maggi ka HSN laga do"), find its HSN code with lookupGst (or take it from the supplier's bill), then call setProductGst with that code. Never pass a gstRate the owner didn't choose from the options setProductGst listed. getStock shows each product's tag, or "not tagged".`,
   memory: `When the owner tells you a lasting fact or a preference ("Ramesh is Lakshmi's husband", "call me Akka", "Fatima pays on Saturdays"), save it with remember. Before answering about a customer's background, check recall and repeat what it says without adding to it: "the owner" in a fact means the person you are talking to, so say "your", and any other name is someone else.`,
 };
 
@@ -94,8 +96,8 @@ export const SPECIALISTS: Record<Exclude<Desk, "general">, Specialist> = {
   stock: {
     purpose: "stock: what is left, what arrived, what sold, what is running low, reordering from and paying the wholesaler, and the GST on goods",
     // GST questions name a product ("Maggi pe kitna GST?"), so the router often sends them here.
-    tools: ["getStock", "updateStock", "setReorderLevel", "recordSale", "askSupplierQuote", "placeSupplierOrder", "supplierDues", "paySupplier", "lookupGst", "checkGstPortal", "makeChart", ...MEMORY_TOOLS],
-    rules: [RULES.stock, RULES.restock, RULES.payout, RULES.gst, RULES.portal, RULES.chart, RULES.memory],
+    tools: ["getStock", "updateStock", "setReorderLevel", "setProductGst", "recordSale", "askSupplierQuote", "placeSupplierOrder", "supplierDues", "paySupplier", "lookupGst", "checkGstPortal", "makeChart", ...MEMORY_TOOLS],
+    rules: [RULES.stock, RULES.restock, RULES.payout, RULES.gst, RULES.gstTag, RULES.portal, RULES.chart, RULES.memory],
   },
 };
 

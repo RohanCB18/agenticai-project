@@ -5,7 +5,19 @@ import type { SupplierOrder } from "./supplier";
 // against Supabase in the app and an in-memory fake in tests.
 
 export type Customer = { id: string; name: string; aliases: string[]; phone: string | null; language: Language | null };
-export type Product = { id: string; name: string; aliases: string[]; unit: string; stockQty: number; reorderLevel: number | null; pricePaise: number | null };
+export type Product = {
+  id: string;
+  name: string;
+  aliases: string[];
+  unit: string;
+  stockQty: number;
+  reorderLevel: number | null;
+  pricePaise: number | null;
+  /** HSN code, digits only, and the official GST rate with the entry it comes from. Null until tagged. */
+  hsn?: string | null;
+  gstRate?: number | null;
+  gstCitation?: string | null;
+};
 export type Balance = { customerId: string; name: string; outstandingPaise: Paise; lastCreditAt: string | null; lastPaymentAt: string | null };
 export type LedgerEntry = { id: string; kind: LedgerKind; amountPaise: Paise; customerId: string | null; note: string | null; createdAt: string };
 
@@ -45,6 +57,8 @@ export interface KhataStore {
   moveStock(input: { productId: string; delta: number; reason: string }): Promise<Product>;
   /** The stock level at or below which a product counts as running low; null removes the alert. */
   setReorderLevel(productId: string, level: number | null): Promise<Product>;
+  /** Tags a product with its HSN code and an official GST rate (null when it still needs choosing). */
+  setProductGst(productId: string, tag: { hsn: string; gstRate: number | null; citation: string | null }): Promise<Product>;
   /** Creates a Cashfree link and records it. Only called after the owner approved. */
   createPaymentLink(input: { customer: Customer; amountPaise: Paise; purpose: string }): Promise<PaymentLink>;
   /** Creates an exact-amount UPI QR for a customer at the counter. Throws if Cashfree can't issue one. */

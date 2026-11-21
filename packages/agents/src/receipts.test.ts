@@ -1,6 +1,16 @@
 import type { ModelMessage } from "ai";
 import { describe, expect, it } from "vitest";
-import { claimsUnbackedAction, completedActions, missedEntry, reportsEntry, receiptLines } from "./receipts";
+import {
+  claimsUnbackedAction,
+  completedActions,
+  completedActionsInParts,
+  missedEntry,
+  NOT_RECORDED,
+  NOTHING_SAVED,
+  replyFooter,
+  reportsEntry,
+  receiptLines,
+} from "./receipts";
 
 const result = (toolName: string, value: Record<string, unknown>): ModelMessage => ({
   role: "tool",
@@ -111,5 +121,51 @@ describe("reported entries that weren't recorded", () => {
     expect(missedEntry(owner, "Ramesh ka kuch baaki nahi hai. Kya 200 advance ke roop mein likhun?", [])).toBe(false);
     expect(missedEntry(owner, "Ramesh ka ab 0 baaki hai.", [{ tool: "recordPayment", output: { status: "recorded" } }])).toBe(false);
     expect(missedEntry("Ramesh ka kitna baaki hai?", "Ramesh ka 450 baaki hai.", [])).toBe(false);
+  });
+});
+
+describe("the web chat's view of a turn", () => {
+  it("reads saved changes from chat message parts, including after an approval", () => {
+    const parts = [
+      { type: "step-start" },
+      { type: "tool-getBalances", state: "output-available", output: { customers: [], total: "₹0" } },
+      { type: "tool-recordCredit", state: "output-available", output: { status: "recorded", customer: "Ramesh", amount: "₹450", nowOwes: "₹1,250" } },
+      { type: "tool-recordPayment", state: "output-available", output: { status: "possible_repeat" } },
+      { type: "tool-recordSale", state: "input-available" },
+      { type: "tool-paySupplier", state: "output-available", output: { status: "payout_started", supplier: "Sharma Traders", amount: "₹500", to: "UPI su•••@upi" } },
+      { type: "text", text: "Ramesh ka 450 likh diya." },
+    ];
+    expect(completedActionsInParts(parts).map((a) => a.tool)).toEqual(["recordCredit", "paySupplier"]);
+  });
+});
+
+describe("GST tag receipts", () => {
+  it("writes the tag from the tool's output, and nothing until it is saved", () => {
+    expect(receiptLines([{ tool: "setProductGst", output: { status: "tagged", product: "Maggi", hsn: "1902", gst: "5%" } }])).toEqual(["🧾 GST tag: Maggi · HSN 1902 · 5%"]);
+    expect(completedActionsInParts([{ type: "tool-setProductGst", state: "output-available", output: { status: "choose_rate" } }])).toEqual([]);
+  });
+});
+
+describe("replyFooter", () => {
+  const credit = { tool: "recordCredit", output: { status: "recorded", customer: "Ramesh", amount: "₹450", nowOwes: "₹1,250" } };
+
+  it("lists receipts and no warning when the change was saved", () => {
+    expect(replyFooter({ ownerText: "Ramesh ne 450 ka saaman liya", reply: "Likh diya.", actions: [credit], awaitingApproval: false })).toEqual({
+      receipts: ["🧾 Udhaar: Ramesh ₹450 · owes ₹1,250"],
+      notice: null,
+    });
+  });
+
+  it("warns when the reply claims a change no tool made", () => {
+    expect(replyFooter({ ownerText: "Ramesh ne 450 ka saaman liya", reply: "Ramesh ka 450 likh diya.", actions: [], awaitingApproval: false }).notice).toBe(NOTHING_SAVED);
+  });
+
+  it("says when a reported entry wasn't recorded", () => {
+    expect(replyFooter({ ownerText: "Ramesh ne 200 diye, ab kitna baaki hai?", reply: "Ramesh ka 0 baaki hai.", actions: [], awaitingApproval: false }).notice).toBe(NOT_RECORDED);
+  });
+
+  it("stays quiet while an approval waits, and doesn't warn twice", () => {
+    expect(replyFooter({ ownerText: "Ramesh ne 200 diye", reply: "Link bhej diya.", actions: [], awaitingApproval: true }).notice).toBeNull();
+    expect(replyFooter({ ownerText: "Ramesh ne 200 diye", reply: `Likh diya.\n\n${NOTHING_SAVED}`, actions: [], awaitingApproval: false }).notice).toBeNull();
   });
 });

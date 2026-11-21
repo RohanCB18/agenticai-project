@@ -28,6 +28,11 @@ const BILL_SCHEMA = {
           unit: { type: "string", description: "Unit such as kg, ltr, pkt or box" },
           rate: { type: "number", description: "Price per unit in rupees" },
           amount: { type: "number", description: "Line amount in rupees" },
+          hsn: { type: "string", description: "HSN code printed for this item, digits only. Empty if none is printed" },
+          gst_rate: { type: "number", description: "Total GST percent charged on this item (CGST + SGST, or IGST). Empty if not shown" },
+          cgst_rate: { type: "number", description: "CGST percent for this item, if shown" },
+          sgst_rate: { type: "number", description: "SGST or UTGST percent for this item, if shown" },
+          igst_rate: { type: "number", description: "IGST percent for this item, if shown" },
         },
       },
     },
@@ -35,7 +40,17 @@ const BILL_SCHEMA = {
   },
 };
 
-export type BillItem = { name: string; quantity: number | null; unit: string | null; rate: number | null; amount: number | null };
+export type BillItem = {
+  name: string;
+  quantity: number | null;
+  unit: string | null;
+  rate: number | null;
+  amount: number | null;
+  /** HSN code as printed, digits only (4, 6 or 8 of them), or null. */
+  hsn?: string | null;
+  /** Total GST percent charged on the line, or null when the bill doesn't show it. */
+  gstRate?: number | null;
+};
 export type Bill = { supplierName: string | null; billNumber: string | null; billDate: string | null; items: BillItem[]; total: number | null };
 
 export class BillReadError extends Error {
@@ -81,10 +96,35 @@ export async function readBill(opts: { apiKey: string; image: Blob; filename?: s
     billNumber: text(result?.bill_number),
     billDate: text(result?.bill_date),
     items: items
-      .map((item) => ({ name: text(item.name) ?? "", quantity: number(item.quantity), unit: text(item.unit), rate: number(item.rate), amount: number(item.amount) }))
+      .map((item) => ({
+        name: text(item.name) ?? "",
+        quantity: number(item.quantity),
+        unit: text(item.unit),
+        rate: number(item.rate),
+        amount: number(item.amount),
+        hsn: hsnCode(item.hsn),
+        gstRate: chargedGst(item),
+      }))
       .filter((item) => item.name),
     total: number(result?.total),
   };
+}
+
+/** "0713 10", "07131000" or "HSN: 0713" → "0713..." digits; anything not 4, 6 or 8 digits → null. */
+function hsnCode(value: unknown) {
+  const digits = String(value ?? "").replace(/\D/g, "");
+  return [4, 6, 8].includes(digits.length) ? digits : null;
+}
+
+/**
+ * The total GST charged on a line. CGST and SGST are always equal, so a bill showing only CGST
+ * 2.5% charges 5%. An explicit split wins over a total, which is easier to misread.
+ */
+function chargedGst(item: Record<string, unknown>) {
+  const [igst, cgst, sgst, total] = [item.igst_rate, item.cgst_rate, item.sgst_rate, item.gst_rate].map(number);
+  if (igst !== null && igst > 0) return igst;
+  if (cgst !== null && cgst > 0) return sgst !== null && sgst > 0 ? cgst + sgst : cgst * 2;
+  return total;
 }
 
 /**
@@ -119,8 +159,8 @@ export function planBill(bill: Bill, products: { id: string; name: string; alias
   });
 }
 
-/** The message the owner approves. */
-export function billSummary(bill: Bill, items: PlannedItem[], warnings: string[]) {
+/** The message the owner approves. The GST check (billGstSummary) goes last: it doesn't change the stock. */
+export function billSummary(bill: Bill, items: PlannedItem[], warnings: string[], gstSummary = "") {
   const heading = [bill.supplierName ?? "Bill", bill.billNumber ? `Bill ${bill.billNumber}` : null, bill.total !== null ? formatINR(rupeesToPaise(bill.total)) : null]
     .filter(Boolean)
     .join(" · ");
@@ -131,5 +171,6 @@ export function billSummary(bill: Bill, items: PlannedItem[], warnings: string[]
     return `• ${item.productName}: ${quantity}${after}`;
   });
   const doubts = warnings.length ? `\n\n⚠️ Please check:\n${warnings.map((w) => `• ${w}`).join("\n")}` : "";
-  return `🧾 ${heading}\n\n${lines.join("\n")}${doubts}\n\nAdd this to stock?`;
+  const gst = gstSummary ? `\n\n${gstSummary}` : "";
+  return `🧾 ${heading}\n\n${lines.join("\n")}${doubts}${gst}\n\nAdd this to stock?`;
 }

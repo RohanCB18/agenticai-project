@@ -6,7 +6,13 @@ import type { ModelMessage } from "ai";
 export type Action = { tool: string; output: Record<string, unknown> };
 
 /** Statuses a write tool returns only after the change is saved. */
-const DONE = new Set(["added", "recorded", "updated", "sent", "qr_ready", "payment_received", "remembered", "forgotten", "ordered", "alert_set", "paid", "payout_started"]);
+const DONE = new Set(["added", "recorded", "updated", "sent", "qr_ready", "payment_received", "remembered", "forgotten", "ordered", "alert_set", "paid", "payout_started", "tagged"]);
+
+/** True for a tool output that reports a saved change. */
+function isDone(output: unknown): output is Record<string, unknown> {
+  const status = (output as { status?: unknown } | null)?.status;
+  return typeof status === "string" && DONE.has(status);
+}
 
 /** Write actions that succeeded in these messages. */
 export function completedActions(messages: ModelMessage[]): Action[] {
@@ -15,11 +21,20 @@ export function completedActions(messages: ModelMessage[]): Action[] {
     if (message.role !== "tool") continue;
     for (const part of message.content) {
       if (part.type !== "tool-result" || part.output.type !== "json") continue;
-      const output = part.output.value as Record<string, unknown> | null;
-      if (output && typeof output.status === "string" && DONE.has(output.status)) actions.push({ tool: part.toolName, output });
+      if (isDone(part.output.value)) actions.push({ tool: part.toolName, output: part.output.value });
     }
   }
   return actions;
+}
+
+/** A part of a chat (UI) message, as the web chat holds it: tool parts are typed "tool-<name>". */
+export type MessagePart = { type: string; state?: string; output?: unknown };
+
+/** The same, read from a web chat message's tool parts, including what ran after an approval. */
+export function completedActionsInParts(parts: readonly MessagePart[]): Action[] {
+  return parts.flatMap((part) =>
+    part.type.startsWith("tool-") && part.state === "output-available" && isDone(part.output) ? [{ tool: part.type.slice("tool-".length), output: part.output }] : [],
+  );
 }
 
 const s = (value: unknown) => (value === undefined || value === null ? "" : String(value));
@@ -48,6 +63,8 @@ export function receiptLines(actions: Action[]): string[] {
         return ["🧾 Forgotten"];
       case "setReorderLevel":
         return [output.alertAt ? `🧾 Alert: ${s(output.product)} at ${s(output.alertAt)} (now ${s(output.stock)})` : `🧾 Alert removed: ${s(output.product)}`];
+      case "setProductGst":
+        return [`🧾 GST tag: ${s(output.product)} · HSN ${s(output.hsn)} · ${s(output.gst)}`];
       case "paySupplier":
         return [
           output.status === "paid"
@@ -125,3 +142,19 @@ export function missedEntry(ownerText: string, reply: string, actions: Action[])
 }
 
 export const NOT_RECORDED = "📝 Nothing was recorded from this message. If it was a new entry, say \"record it\".";
+
+/** What goes under a reply, the same on every channel: receipts, then at most one warning. */
+export type ReplyFooter = { receipts: string[]; notice: typeof NOTHING_SAVED | typeof NOT_RECORDED | null };
+
+/**
+ * Receipts for what was saved, and a warning when the reply claims a change no tool made, or the
+ * owner reported an entry and nothing was saved. No warning while an approval is waiting: the
+ * turn isn't over, and the approval card already says nothing has happened yet.
+ */
+export function replyFooter(turn: { ownerText: string; reply: string; actions: Action[]; awaitingApproval: boolean }): ReplyFooter {
+  const receipts = receiptLines(turn.actions);
+  if (turn.awaitingApproval || turn.reply.includes(NOTHING_SAVED)) return { receipts, notice: null };
+  if (claimsUnbackedAction(turn.reply, turn.actions)) return { receipts, notice: NOTHING_SAVED };
+  if (missedEntry(turn.ownerText, turn.reply, turn.actions)) return { receipts, notice: NOT_RECORDED };
+  return { receipts, notice: null };
+}

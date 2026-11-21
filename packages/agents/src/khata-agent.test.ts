@@ -354,6 +354,7 @@ describe("specialist desks", () => {
       "recall",
       "recordSale",
       "remember",
+      "setProductGst",
       "setReorderLevel",
       "supplierDues",
       "updateStock",

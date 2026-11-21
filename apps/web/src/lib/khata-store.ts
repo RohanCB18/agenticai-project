@@ -17,7 +17,19 @@ function must<T>(result: { data: T | null; error: { message: string } | null }, 
 
 type CustomerRow = { id: string; name: string; aliases: string[]; phone: string | null; language: Customer["language"] };
 type EntryRow = { id: string; kind: LedgerEntry["kind"]; amount_paise: number; customer_id: string | null; note: string | null; created_at: string };
-type ProductRow = { id: string; name: string; aliases: string[]; unit: string; stock_qty: number | string; reorder_level: number | string | null; price_paise: number | null };
+type ProductRow = {
+  id: string;
+  name: string;
+  aliases: string[];
+  unit: string;
+  stock_qty: number | string;
+  reorder_level: number | string | null;
+  price_paise: number | null;
+  hsn: string | null;
+  gst_rate: number | string | null;
+  gst_citation: string | null;
+};
+const PRODUCT_COLUMNS = "id, name, aliases, unit, stock_qty, reorder_level, price_paise, hsn, gst_rate, gst_citation";
 
 const toEntry = (r: EntryRow): LedgerEntry => ({
   id: r.id,
@@ -36,6 +48,9 @@ const toProduct = (r: ProductRow): Product => ({
   stockQty: Number(r.stock_qty),
   reorderLevel: r.reorder_level === null ? null : Number(r.reorder_level),
   pricePaise: r.price_paise,
+  hsn: r.hsn,
+  gstRate: r.gst_rate === null ? null : Number(r.gst_rate),
+  gstCitation: r.gst_citation,
 });
 
 /**
@@ -121,14 +136,14 @@ export function createSupabaseKhataStore(db: SupabaseClient, merchantId: string,
 
     async listProducts() {
       return (
-        must(await db.from("products").select("id, name, aliases, unit, stock_qty, reorder_level, price_paise").eq("merchant_id", merchantId).order("name"), "List products") as ProductRow[]
+        must(await db.from("products").select(PRODUCT_COLUMNS).eq("merchant_id", merchantId).order("name"), "List products") as ProductRow[]
       ).map(toProduct);
     },
 
     async moveStock({ productId, delta, reason }) {
       must(await db.from("stock_movements").insert({ merchant_id: merchantId, product_id: productId, delta, reason, source: opts.source }).select("id").single(), "Move stock");
       return toProduct(
-        must(await db.from("products").select("id, name, aliases, unit, stock_qty, reorder_level, price_paise").eq("id", productId).eq("merchant_id", merchantId).single(), "Read product") as ProductRow,
+        must(await db.from("products").select(PRODUCT_COLUMNS).eq("id", productId).eq("merchant_id", merchantId).single(), "Read product") as ProductRow,
       );
     },
 
@@ -140,11 +155,28 @@ export function createSupabaseKhataStore(db: SupabaseClient, merchantId: string,
             .update({ reorder_level: level })
             .eq("id", productId)
             .eq("merchant_id", merchantId)
-            .select("id, name, aliases, unit, stock_qty, reorder_level, price_paise")
+            .select(PRODUCT_COLUMNS)
             .single(),
           "Set reorder level",
         ) as ProductRow,
       );
+    },
+
+    async setProductGst(productId, { hsn, gstRate, citation }) {
+      const product = toProduct(
+        must(
+          await db
+            .from("products")
+            .update({ hsn, gst_rate: gstRate, gst_citation: citation })
+            .eq("id", productId)
+            .eq("merchant_id", merchantId)
+            .select(PRODUCT_COLUMNS)
+            .single(),
+          "Tag product GST",
+        ) as ProductRow,
+      );
+      await store.audit("product_gst_tagged", { productId, hsn, gstRate, citation });
+      return product;
     },
 
     async createPaymentLink({ customer, amountPaise, purpose }): Promise<PaymentLink> {

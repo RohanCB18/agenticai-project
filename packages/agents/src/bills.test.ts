@@ -76,6 +76,11 @@ describe("billSummary", () => {
   it("labels new items", () => {
     expect(billSummary(bill, planBill(bill, []), [])).toContain("(new item)");
   });
+
+  it("puts the GST check after the stock changes, before the question", () => {
+    const summary = billSummary(bill, planBill(bill, products), [], "🔎 GST: all 2 items with an HSN code match the official rates.");
+    expect(summary).toMatch(/stock 18 → 43[\s\S]*\n\n🔎 GST: all 2 items[^\n]*\n\nAdd this to stock\?$/);
+  });
 });
 
 describe("readBill", () => {
@@ -102,6 +107,23 @@ describe("readBill", () => {
     expect(read.items).toHaveLength(1);
     expect(urls[0]).toContain("/doc-ai/v1/job/extract");
     expect(urls.at(-1)).toContain("/j1/results");
+  });
+
+  it("reads each line's HSN code and the total GST charged", async () => {
+    const items = [
+      { name: "Toor Dal", quantity: 10, unit: "kg", rate: 140, amount: 1400, hsn: "0713 10 00", cgst_rate: 9, sgst_rate: 9 },
+      { name: "Rice", quantity: 25, unit: "kg", rate: 54, amount: 1350, hsn: "HSN 1006", igst_rate: 5 },
+      { name: "Sugar", quantity: 20, unit: "kg", rate: 44, amount: 880, hsn: "17", cgst_rate: 2.5 },
+      { name: "Salt", quantity: 5, unit: "kg", rate: 20, amount: 100, gst_rate: "0" },
+    ];
+    const { fn } = fakeFetch([respond({ job_id: "j3", status: "completed" }, 201), respond({ result: { items } })]);
+    const read = await readBill({ apiKey: "k", image: new Blob(["x"]), fetch: fn, pollMs: 0 });
+    expect(read.items.map(({ name, hsn, gstRate }) => ({ name, hsn, gstRate }))).toEqual([
+      { name: "Toor Dal", hsn: "07131000", gstRate: 18 },
+      { name: "Rice", hsn: "1006", gstRate: 5 },
+      { name: "Sugar", hsn: null, gstRate: 5 }, // only CGST shown: SGST is always the same
+      { name: "Salt", hsn: null, gstRate: 0 },
+    ]);
   });
 
   it("fails clearly when the job fails", async () => {
