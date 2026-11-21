@@ -1,7 +1,7 @@
 "use client";
 
 import type { KhataUIMessage } from "@munshi/agents";
-import { completedActionsInParts, type MessagePart, NOT_RECORDED, type ReplyFooter, replyFooter } from "@munshi/agents/receipts";
+import { askedAboutRepeatInParts, completedActionsInParts, type MessagePart, NOT_RECORDED, type ReplyFooter, replyFooter } from "@munshi/agents/receipts";
 
 const textOf = (message: KhataUIMessage) =>
   message.parts
@@ -21,6 +21,7 @@ export function footerFor(messages: KhataUIMessage[], index: number, finished: b
     ownerText: owner ? textOf(owner) : "",
     reply: textOf(message),
     actions: completedActionsInParts(parts),
+    repeatAsked: askedAboutRepeatInParts(parts),
     // Approved but not yet carried out still counts as waiting: the continuation is on its way.
     awaitingApproval: parts.some((part) => part.state === "approval-requested" || part.state === "approval-responded"),
   });

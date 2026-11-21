@@ -1,6 +1,8 @@
 import type { ModelMessage } from "ai";
 import { describe, expect, it } from "vitest";
 import {
+  askedAboutRepeat,
+  askedAboutRepeatInParts,
   claimsUnbackedAction,
   completedActions,
   completedActionsInParts,
@@ -154,6 +156,22 @@ describe("replyFooter", () => {
       receipts: ["🧾 Udhaar: Ramesh ₹450 · owes ₹1,250"],
       notice: null,
     });
+  });
+
+  it("doesn't warn when the reply asks about an entry a tool found saved minutes ago", () => {
+    // Live: "yeh entry pehle bhi record hui thi. Kya yeh naya payment hai?" got "Nothing was saved".
+    const reply = "Ramesh ne 20 rupaye diye, yeh entry pehle bhi record hui thi. Kya yeh naya payment hai?";
+    expect(replyFooter({ ownerText: "Ramesh ne 20 diye", reply, actions: [], awaitingApproval: false }).notice).toBe(NOTHING_SAVED);
+    expect(replyFooter({ ownerText: "Ramesh ne 20 diye", reply, actions: [], awaitingApproval: false, repeatAsked: true }).notice).toBeNull();
+
+    const repeat = { type: "tool-recordPayment", state: "output-available", output: { status: "possible_repeat" } };
+    expect(askedAboutRepeatInParts([{ type: "text" }, repeat])).toBe(true);
+    expect(askedAboutRepeatInParts([{ ...repeat, output: { status: "recorded" } }])).toBe(false);
+    const toolMessage = {
+      role: "tool",
+      content: [{ type: "tool-result", toolCallId: "1", toolName: "recordPayment", output: { type: "json", value: { status: "possible_repeat" } } }],
+    } as unknown as ModelMessage;
+    expect(askedAboutRepeat([toolMessage])).toBe(true);
   });
 
   it("warns when the reply claims a change no tool made", () => {

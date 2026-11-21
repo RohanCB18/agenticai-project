@@ -1,6 +1,7 @@
 import "server-only";
 import {
   approvalResponse,
+  askedAboutRepeat,
   claimsUnbackedAction,
   EMPTY_REPLY_NOTE,
   NOT_RECORDED,
@@ -150,13 +151,13 @@ export async function handleInbound(inbound: Inbound, sender: ChannelSender) {
 
     // A reply that says "likh diya" with no tool behind it: try once more from the owner's
     // message, told what went wrong. If it still claims without acting, say so plainly.
-    if (claimsUnbackedAction(text, completedActions(responseMessages))) {
+    if (claimsUnbackedAction(text, completedActions(responseMessages), askedAboutRepeat(responseMessages))) {
       console.warn("[munshi] reply claimed an action no tool took; retrying:", text);
       const retry = await traced({ ...trace, reason: "retry:unbacked-claim" }, () => agentFor(UNBACKED_CLAIM_NOTE).generate({ messages, abortSignal }));
       console.info(`[munshi] ${channel} retry run: ${runSummary(retry)}`);
       responseMessages = retry.responseMessages;
       text = retry.text.trim();
-      if (claimsUnbackedAction(text, completedActions(responseMessages))) text = `${text}\n\n${NOTHING_SAVED}`;
+      if (claimsUnbackedAction(text, completedActions(responseMessages), askedAboutRepeat(responseMessages))) text = `${text}\n\n${NOTHING_SAVED}`;
     }
     // The model sometimes ends with no words at all. Give it one more turn with any tool results in
     // hand, told its answer was empty: asked again with nothing new, it came back empty again.
@@ -180,7 +181,13 @@ export async function handleInbound(inbound: Inbound, sender: ChannelSender) {
   // New payment links: make sure the owner gets the link, with a button to pass it on.
   // Receipts come from the tools' own output, so the owner can tell what was really saved. The web
   // chat shows the same footer (replyFooter), built from the same tool results.
-  const footer = replyFooter({ ownerText, reply: text, actions: completedActions(responseMessages), awaitingApproval: pendingApprovals(messages).length > 0 });
+  const footer = replyFooter({
+    ownerText,
+    reply: text,
+    actions: completedActions(responseMessages),
+    repeatAsked: askedAboutRepeat(responseMessages),
+    awaitingApproval: pendingApprovals(messages).length > 0,
+  });
   let reply = footer.receipts.length && text ? `${text}\n\n${footer.receipts.join("\n")}` : text;
   if (footer.notice) {
     if (footer.notice === NOT_RECORDED) console.warn("[munshi] owner reported an entry but nothing was recorded:", ownerText);

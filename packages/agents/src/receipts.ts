@@ -108,9 +108,25 @@ const CLAIMS = [
   /(எழுதி(னேன்|விட்டேன்)|பதிவு\s*செய்த|சேர்த்த|அனுப்பின)/, // Tamil
 ];
 
-/** True when the reply says something was saved or sent, yet no write action succeeded. */
-export function claimsUnbackedAction(reply: string, actions: Action[]): boolean {
-  return actions.length === 0 && CLAIMS.some((pattern) => pattern.test(reply));
+/**
+ * True when the reply says something was saved or sent, yet no write action succeeded. Not when a
+ * tool found the same entry saved minutes ago: the reply then rightly says "yeh pehle record hui
+ * thi, naya hai?" (live, that question got a false "Nothing was saved" warning).
+ */
+export function claimsUnbackedAction(reply: string, actions: Action[], repeatAsked = false): boolean {
+  return !repeatAsked && actions.length === 0 && CLAIMS.some((pattern) => pattern.test(reply));
+}
+
+const isRepeat = (output: unknown) => (output as { status?: unknown } | null)?.status === "possible_repeat";
+
+/** True when a tool in these messages found the entry already saved and asked the owner about it. */
+export function askedAboutRepeat(messages: ModelMessage[]): boolean {
+  return messages.some((m) => m.role === "tool" && m.content.some((part) => part.type === "tool-result" && part.output.type === "json" && isRepeat(part.output.value)));
+}
+
+/** The same, in a web chat message's tool parts. */
+export function askedAboutRepeatInParts(parts: readonly MessagePart[]): boolean {
+  return parts.some((part) => part.type.startsWith("tool-") && part.state === "output-available" && isRepeat(part.output));
 }
 
 /** The closing note for a retry after an unbacked claim. */
@@ -163,10 +179,10 @@ export type ReplyFooter = { receipts: string[]; notice: typeof NOTHING_SAVED | t
  * owner reported an entry and nothing was saved. No warning while an approval is waiting: the
  * turn isn't over, and the approval card already says nothing has happened yet.
  */
-export function replyFooter(turn: { ownerText: string; reply: string; actions: Action[]; awaitingApproval: boolean }): ReplyFooter {
+export function replyFooter(turn: { ownerText: string; reply: string; actions: Action[]; awaitingApproval: boolean; repeatAsked?: boolean }): ReplyFooter {
   const receipts = receiptLines(turn.actions);
   if (turn.awaitingApproval || turn.reply.includes(NOTHING_SAVED)) return { receipts, notice: null };
-  if (claimsUnbackedAction(turn.reply, turn.actions)) return { receipts, notice: NOTHING_SAVED };
+  if (claimsUnbackedAction(turn.reply, turn.actions, turn.repeatAsked)) return { receipts, notice: NOTHING_SAVED };
   if (missedEntry(turn.ownerText, turn.reply, turn.actions)) return { receipts, notice: NOT_RECORDED };
   return { receipts, notice: null };
 }
