@@ -69,7 +69,7 @@ uv sync --all-packages && uv run pytest -q
 | Customer isn't in the shop | `sendPaymentLink` (owner approves first) | Cashfree webhook, or `checkPayment` |
 | Customer is at the counter | `showPaymentQr` (shown only to the owner) | Cashfree webhook, or `checkPayment` |
 
-Webhook and `checkPayment` share one settlement path, so a payment reported twice is recorded once. Webhooks need a public https URL in `PUBLIC_APP_URL`; `checkPayment` ("Ramesh ka payment aaya?") works without one. Links are UPI-only; in the sandbox they also allow net banking, because on a computer the sandbox's UPI page is only a QR code that no real UPI app can pay, and the test bank lets a tester finish a payment.
+Webhook and `checkPayment` share one settlement path, so a payment reported twice is recorded once. Webhooks need a public https URL in `PUBLIC_APP_URL`; `checkPayment` ("Ramesh ka payment aaya?") works without one. Links are UPI-only and open straight in a UPI app (a QR code on a computer). In the sandbox that QR code is one no real UPI app can pay, so sandbox links also list net banking, whose test bank lets a tester finish a payment (UPI intent stays off there, because it skips the list).
 
 **QR limit:** the QR uses Cashfree's Order Pay API. It works in sandbox, but in production Cashfree only enables it for accounts showing over Rs 1 crore annual turnover. Without that, `showPaymentQr` reports `qr_unavailable` and Munshi offers a payment link instead.
 

@@ -85,9 +85,14 @@ export function createPaymentLink(input: CreateLinkInput): Promise<CashfreeLink>
       customer_details: { customer_name: input.customer.name, customer_phone: tenDigit(input.customer.phone) },
       link_notify: { send_sms: cashfreeSendsSms(), send_email: false },
       link_expiry_time: input.expiresAt.toISOString(),
-      // UPI only for customers. In the sandbox, UPI on a computer is a QR no real app can pay, so a
-      // tester also gets net banking, whose test bank can approve a payment.
-      link_meta: { upi_intent: true, payment_methods: isProduction() ? "upi" : "upi,nb", ...(input.notifyUrl ? { notify_url: input.notifyUrl } : {}) },
+      // Customers go straight to UPI (the app on a phone, a QR on a computer). In the sandbox, that
+      // QR is one no real app can pay, so a tester also gets net banking, whose test bank can approve
+      // a payment; UPI intent stays off there, since it skips the list of methods.
+      link_meta: {
+        upi_intent: isProduction(),
+        payment_methods: isProduction() ? "upi" : "upi,nb",
+        ...(input.notifyUrl ? { notify_url: input.notifyUrl } : {}),
+      },
       link_notes: input.notes,
     }),
   });
