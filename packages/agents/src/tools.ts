@@ -1,7 +1,18 @@
 import { formatINR, Language, rupeesToPaise } from "@munshi/db";
 import { type ModelMessage, tool } from "ai";
 import { z } from "zod";
-import { CHART_CODE_GUIDE, type ChartRunner, chartFiles, NOTHING_TO_CHART } from "./charts";
+import {
+  CHART_CODE_GUIDE,
+  CHART_PERIODS,
+  CHART_TOPICS,
+  type ChartRunner,
+  chartFiles,
+  chartTotals,
+  chartWindow,
+  NOTHING_TO_CHART,
+  nothingToChart,
+  salesChartSkipsUdhaar,
+} from "./charts";
 import { paymentHabits } from "./habits";
 import { coversHsn, type GstPassage, gstCitation, type KnowledgeBase, officialRates } from "./knowledge";
 import { ownerWasAskedAboutRepeat } from "./threads";
@@ -751,14 +762,31 @@ export function createKhataTools(store: KhataStore, shopName = "your shop", opti
         "Draw a chart of the shop's own numbers (sales, udhaar, payments, expenses, stock) for 'is mahine ki sale chart mein dikhao' or 'udhaar ka graph'. You write a short Python program; it runs in an isolated sandbox over the khata's data and the picture is sent to the owner.",
       inputSchema: z.object({
         title: z.string().min(3).max(80).describe("The chart's title, in English"),
-        days: z.number().int().min(1).max(366).default(30).describe("How many days of the khata the program gets: 7 for a week, 30 for a month"),
+        about: z
+          .enum(CHART_TOPICS)
+          .describe("What it shows: sales (cash and udhaar, what 'sale' means in a kirana), cash_sales (only if the owner says cash only), udhaar, payments (money customers paid), expenses, stock, or other"),
+        period: z
+          .enum(CHART_PERIODS)
+          .default("last_30_days")
+          .describe("The days it covers: this_month for 'is mahine', last_month for 'pichhle mahine', last_7_days for 'is hafte'"),
         code: z.string().min(20).max(6000).describe(CHART_CODE_GUIDE),
       }),
-      execute: async ({ title, days, code }) => {
+      execute: async ({ title, about, period, code }) => {
         if (!charts) return { status: "charts_off", hint: "Tell the owner charts aren't set up in Munshi yet." };
+        const window = chartWindow(period);
         const [entries, customers, products] = await Promise.all([store.recentEntries(2000, undefined), store.listCustomers(), store.listProducts()]);
-        const { files, ledgerRows } = chartFiles(entries, customers, products, days);
-        if (ledgerRows === 0 && products.length === 0) return { status: "no_data", days, hint: "Tell the owner there are no entries to chart yet." };
+        const { files, ledgerRows, totals } = chartFiles(entries, customers, products, window);
+        const nothingHint = "No picture was drawn. Tell the owner in one sentence what summary says. Don't call makeChart again for this.";
+        // Counted here, not by the program: an empty period gets a sentence, never an empty picture.
+        const missing = nothingToChart(about, totals, products.length, window);
+        if (missing) return { status: "nothing_to_chart", period: window.label, summary: missing, hint: nothingHint };
+        if (salesChartSkipsUdhaar(about, code)) {
+          return {
+            status: "chart_error",
+            error: "This sales chart leaves out udhaar. In a kirana udhaar is a sale: draw daily.csv's cash_sales and udhaar as stacked bars (or its sales column).",
+            hint: "Fix the program and call makeChart again.",
+          };
+        }
 
         let result;
         try {
@@ -769,14 +797,7 @@ export function createKhataTools(store: KhataStore, shopName = "your shop", opti
         }
         // The program found nothing to draw for the question: say so, no empty picture.
         const nothing = result.ok ? null : result.stdout?.match(new RegExp(`${NOTHING_TO_CHART}:?\\s*(.*)`));
-        if (nothing) {
-          return {
-            status: "nothing_to_chart",
-            days,
-            summary: nothing[1]?.trim() || "nothing to chart",
-            hint: "No picture was drawn. Tell the owner in one sentence what summary says. Don't call makeChart again for this.",
-          };
-        }
+        if (nothing) return { status: "nothing_to_chart", period: window.label, summary: nothing[1]?.trim() || "nothing to chart", hint: nothingHint };
         if (!result.ok) {
           return {
             status: "chart_error",
@@ -789,10 +810,11 @@ export function createKhataTools(store: KhataStore, shopName = "your shop", opti
           status: "chart_ready",
           chartId: chart.id,
           title,
-          days,
+          period: window.label,
           entries: ledgerRows,
+          ...(about === "stock" ? {} : { totals: chartTotals(totals) }),
           summary: result.stdout,
-          hint: "The chart is shown to the owner. Reply in one short sentence using only the numbers in summary.",
+          hint: "The chart is shown to the owner. Reply in one short sentence: amounts from totals (counted from the khata), anything else (like the highest day) from summary.",
         };
       },
     }),

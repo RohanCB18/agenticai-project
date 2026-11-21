@@ -425,46 +425,73 @@ describe("paying suppliers", () => {
 
 describe("makeChart", () => {
   const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47]);
-  const code = 'import pandas as pd\npd.read_csv("ledger.csv")';
+  const code = 'import pandas as pd\nd = pd.read_csv("daily.csv")\nd.plot(x="date", y=["cash_sales", "udhaar"], stacked=True)';
+  const chart = (input: { title: string; about: "sales" | "cash_sales" | "udhaar" | "other"; code?: string }, t = tools) =>
+    t.makeChart.execute!({ period: "last_7_days", code, ...input }, ctx);
 
-  it("runs the program over the shop's data and keeps the picture", async () => {
+  it("runs the program over the shop's data, keeps the picture and counts the totals itself", async () => {
     await tools.recordSale.execute!({ kind: "sale", amount: 1200 }, ctx);
+    await tools.recordCredit.execute!({ customerName: "Fatima", amount: 450 }, ctx);
     const runs: { code: string; files: Record<string, string> }[] = [];
-    const charted = createKhataTools(store, "S", { charts: { run: async (input) => (runs.push(input), { ok: true, png, stdout: "Total Rs 1200" }) } });
+    const charted = createKhataTools(store, "S", { charts: { run: async (input) => (runs.push(input), { ok: true, png, stdout: "Highest day Rs 1650" }) } });
 
-    const out = await charted.makeChart.execute!({ title: "Sales this week", days: 7, code }, ctx);
+    const out = await chart({ title: "Sales this week", about: "sales" }, charted);
 
-    expect(out).toMatchObject({ status: "chart_ready", chartId: store.charts[0]!.id, title: "Sales this week", entries: 1, summary: "Total Rs 1200" });
+    expect(out).toMatchObject({
+      status: "chart_ready",
+      chartId: store.charts[0]!.id,
+      title: "Sales this week",
+      entries: 2,
+      totals: { sales: "₹1,650", cashSales: "₹1,200", udhaar: "₹450" },
+      summary: "Highest day Rs 1650",
+    });
     expect(runs[0]!.code).toBe(code);
     expect(runs[0]!.files["ledger.csv"]).toContain(",sale,1200,,");
+    expect(runs[0]!.files["daily.csv"]).toContain(",1200,450,1650,");
     expect(store.charts[0]!.png).toEqual(png);
   });
 
   it("hands back a program's error for the agent to fix, and says when the sandbox is down", async () => {
     await tools.recordSale.execute!({ kind: "sale", amount: 500 }, ctx);
     const failing = createKhataTools(store, "S", { charts: { run: async () => ({ ok: false, error: "KeyError: 'amt'" }) } });
-    expect(await failing.makeChart.execute!({ title: "Sales", days: 7, code }, ctx)).toMatchObject({ status: "chart_error", error: "KeyError: 'amt'" });
+    expect(await chart({ title: "Sales", about: "sales" }, failing)).toMatchObject({ status: "chart_error", error: "KeyError: 'amt'" });
 
     const down = createKhataTools(store, "S", { charts: { run: async () => Promise.reject(new Error("sandbox timeout")) } });
     const quiet = vi.spyOn(console, "error").mockImplementation(() => {});
-    expect(await down.makeChart.execute!({ title: "Sales", days: 7, code }, ctx)).toMatchObject({ status: "chart_unavailable" });
+    expect(await chart({ title: "Sales", about: "sales" }, down)).toMatchObject({ status: "chart_unavailable" });
     quiet.mockRestore();
     expect(store.charts).toHaveLength(0);
   });
 
-  it("sends no empty picture when the program finds nothing to draw", async () => {
+  it("sends a sales program that leaves out udhaar back to be fixed, without running it", async () => {
     await tools.recordCredit.execute!({ customerName: "Fatima", amount: 450 }, ctx);
+    let ran = false;
+    const charted = createKhataTools(store, "S", { charts: { run: async () => ((ran = true), { ok: true, png, stdout: "" }) } });
+    const cashOnly = 'import pandas as pd\ndf = pd.read_csv("ledger.csv")\nsales = df[df.type == "sale"]';
+    expect(await chart({ title: "Sales", about: "sales", code: cashOnly }, charted)).toMatchObject({ status: "chart_error", error: expect.stringContaining("udhaar") });
+    expect(ran).toBe(false);
+  });
+
+  it("sends no empty picture when there is nothing to draw", async () => {
+    await tools.recordCredit.execute!({ customerName: "Fatima", amount: 450 }, ctx);
+    let ran = false;
+    const charted = createKhataTools(store, "S", { charts: { run: async () => ((ran = true), { ok: true, png, stdout: "" }) } });
+    // Counted by the app: a week of udhaar and no cash sale.
+    expect(await chart({ title: "Cash sales", about: "cash_sales" }, charted)).toMatchObject({ status: "nothing_to_chart", summary: expect.stringMatching(/^no cash sales \(/) });
+    expect(ran).toBe(false);
+
+    // Or said by the program, for a question only it can answer.
     const empty = createKhataTools(store, "S", {
-      charts: { run: async () => ({ ok: false, error: "The program ran but didn't save chart.png.", stdout: "NOTHING_TO_CHART: no cash sales this month" }) },
+      charts: { run: async () => ({ ok: false, error: "The program ran but didn't save chart.png.", stdout: "NOTHING_TO_CHART: no udhaar above Rs 1000" }) },
     });
-    expect(await empty.makeChart.execute!({ title: "Cash sales", days: 30, code }, ctx)).toMatchObject({ status: "nothing_to_chart", summary: "no cash sales this month" });
+    expect(await chart({ title: "Big udhaar", about: "udhaar" }, empty)).toMatchObject({ status: "nothing_to_chart", summary: "no udhaar above Rs 1000" });
     expect(store.charts).toHaveLength(0);
   });
 
-  it("says when charts are off or there is nothing to chart", async () => {
-    expect(await tools.makeChart.execute!({ title: "Sales", days: 7, code }, ctx)).toMatchObject({ status: "charts_off" });
+  it("says when charts are off or the khata is empty", async () => {
+    expect(await chart({ title: "Sales", about: "sales" })).toMatchObject({ status: "charts_off" });
     const charted = createKhataTools(store, "S", { charts: { run: async () => ({ ok: true, png, stdout: "" }) } });
-    expect(await charted.makeChart.execute!({ title: "Sales", days: 7, code }, ctx)).toMatchObject({ status: "no_data" });
+    expect(await chart({ title: "Anything", about: "other" }, charted)).toMatchObject({ status: "nothing_to_chart", summary: expect.stringContaining("no entries") });
   });
 });
 
