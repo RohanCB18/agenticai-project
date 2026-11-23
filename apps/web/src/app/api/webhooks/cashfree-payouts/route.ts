@@ -1,5 +1,5 @@
 import { after } from "next/server";
-import { parsePayoutEvent, type PayoutEvent, payoutsConfigured, verifyPayoutWebhook } from "@/lib/cashfree-payouts";
+import { payoutDelivery, payoutsConfigured } from "@/lib/cashfree-payouts";
 import { notifyOwner } from "@/lib/payments";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { payoutNotice, settlePayout } from "@/lib/supplier-payouts";
@@ -12,20 +12,13 @@ export async function POST(request: Request) {
   if (!payoutsConfigured()) return new Response("Cashfree Payouts not configured", { status: 503 });
 
   const raw = await request.text();
-  if (!verifyPayoutWebhook(raw, request.headers.get("x-webhook-timestamp"), request.headers.get("x-webhook-signature"))) {
-    return new Response("Invalid signature", { status: 401 });
-  }
+  const delivery = payoutDelivery(raw, request.headers.get("x-webhook-timestamp"), request.headers.get("x-webhook-signature"));
+  // Answer 200 to everything that isn't a transfer update (low balance alerts, the dashboard's test
+  // event) so Cashfree doesn't count it as a failed delivery and switch the webhook off.
+  if (delivery.kind === "ignore") return Response.json({ ignored: true });
+  if (delivery.kind === "reject") return new Response("Invalid signature", { status: 401 });
 
-  let event: PayoutEvent | null;
-  try {
-    event = parsePayoutEvent(raw);
-  } catch {
-    return new Response("Expected a JSON body", { status: 400 });
-  }
-  // Answer 200 to everything else (low balance alerts, the dashboard's test event) so Cashfree
-  // doesn't count it as a failed delivery and switch the webhook off.
-  if (!event) return Response.json({ ignored: true });
-
+  const { event } = delivery;
   const db = createAdminClient();
   const settled = await settlePayout(db, event);
   if (!settled) return Response.json({ ignored: "unknown transfer" });

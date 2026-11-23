@@ -151,6 +151,25 @@ export function verifyPayoutWebhook(rawBody: string, timestamp: string | null, s
   return Boolean(secret) && verifyWebhookSignature(rawBody, timestamp, signature, secret!);
 }
 
+export type PayoutDelivery = { kind: "ignore" } | { kind: "reject" } | { kind: "event"; event: PayoutEvent };
+
+/**
+ * What to do with one webhook delivery. Only a transfer update changes the books, so only it must
+ * carry a valid header signature; everything else is acknowledged and ignored. Cashfree's own
+ * "Test & Add Webhook" sends a LOW_BALANCE_ALERT with its signature in the body, not the headers:
+ * checking every delivery first refused it with 401 and the webhook couldn't be added.
+ */
+export function payoutDelivery(rawBody: string, timestamp: string | null, signature: string | null): PayoutDelivery {
+  let event: PayoutEvent | null;
+  try {
+    event = parsePayoutEvent(rawBody);
+  } catch {
+    return { kind: "ignore" }; // not JSON: nothing Munshi can act on
+  }
+  if (!event) return { kind: "ignore" };
+  return verifyPayoutWebhook(rawBody, timestamp, signature) ? { kind: "event", event } : { kind: "reject" };
+}
+
 /** "UPI su•••@upi" or "bank ••••1191": where the money goes, without showing all of it. */
 export function maskedAccount(supplier: { payout_vpa: string | null; payout_account_last4: string | null }) {
   if (supplier.payout_vpa) {

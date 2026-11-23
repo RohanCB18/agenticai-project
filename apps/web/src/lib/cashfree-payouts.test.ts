@@ -1,6 +1,6 @@
 import { constants, createHmac, generateKeyPairSync, privateDecrypt } from "node:crypto";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { createTransfer, maskedAccount, parsePayoutEvent, payoutSignature, payoutStatus, verifyPayoutWebhook } from "./cashfree-payouts";
+import { createTransfer, maskedAccount, parsePayoutEvent, payoutDelivery, payoutSignature, payoutStatus, verifyPayoutWebhook } from "./cashfree-payouts";
 import { payoutNotice } from "./supplier-payouts";
 
 afterEach(() => {
@@ -77,6 +77,21 @@ describe("Cashfree Payouts webhooks", () => {
     expect(verifyPayoutWebhook(raw.replace("munshi_1", "munshi_2"), "1731830400", signature)).toBe(false);
     vi.stubEnv("CASHFREE_PAYOUT_CLIENT_SECRET", "");
     expect(verifyPayoutWebhook(raw, "1731830400", signature)).toBe(false);
+  });
+
+  it("acts only on signed transfer updates, and acknowledges the dashboard's test", () => {
+    // Live, "Test & Add Webhook" failed with 401: its LOW_BALANCE_ALERT carries the signature in the body.
+    vi.stubEnv("CASHFREE_PAYOUT_CLIENT_SECRET", "payout-secret");
+    const test = JSON.stringify({ type: "LOW_BALANCE_ALERT", event_time: "2026-11-23T21:49:00", data: { current_balance: "8.53", fundsource_id: "x" } });
+    expect(payoutDelivery(test, null, null)).toEqual({ kind: "ignore" });
+    expect(payoutDelivery("signature=abc&type=LOW_BALANCE_ALERT", null, null)).toEqual({ kind: "ignore" });
+
+    const transfer = body("TRANSFER_SUCCESS", "SUCCESS");
+    const signature = createHmac("sha256", "payout-secret").update(`1731830400${transfer}`).digest("base64");
+    expect(payoutDelivery(transfer, "1731830400", signature)).toMatchObject({ kind: "event", event: { transferId: "munshi_1", status: "success" } });
+    // A transfer update without a valid signature never touches the books.
+    expect(payoutDelivery(transfer, null, null)).toEqual({ kind: "reject" });
+    expect(payoutDelivery(transfer, "1731830400", "forged")).toEqual({ kind: "reject" });
   });
 });
 
