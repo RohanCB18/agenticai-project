@@ -1,6 +1,6 @@
 import { createHmac } from "node:crypto";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { getLink, parseCashfreeEvent, verifyWebhookSignature } from "./cashfree";
+import { cashfreeName, getLink, parseCashfreeEvent, verifyWebhookSignature } from "./cashfree";
 
 describe("Cashfree calls", () => {
   afterEach(() => {
@@ -21,6 +21,17 @@ describe("Cashfree calls", () => {
     );
     await expect(getLink("munshi_1")).rejects.toThrow("didn't answer within 15 s");
     expect(signals[0]).toBeInstanceOf(AbortSignal);
+  });
+});
+
+describe("cashfreeName", () => {
+  it("gives Cashfree a name in English letters, whatever script the owner used", () => {
+    // Live, Cashfree refused "ಸುರೇಶ್": "customer_details.customer_name : should be a person name".
+    expect(cashfreeName("ಸುರೇಶ್")).toBe("Suresh");
+    expect(cashfreeName("ರಮೇಶ್ ಕುಮಾರ್")).toBe("Ramesh Kumar");
+    expect(cashfreeName("ಲಕ್ಷ್ಮಿ")).toBe("Lakshmi");
+    expect(cashfreeName("Fatima")).toBe("Fatima");
+    expect(cashfreeName("🙂")).toBe("Customer");
   });
 });
 

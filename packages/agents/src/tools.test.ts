@@ -3,7 +3,7 @@ import type { GstPassage, KnowledgeBase } from "./knowledge";
 import { receiptLines } from "./receipts";
 import type { Product } from "./store";
 import { MemoryStore } from "./testing/memory-store";
-import { createKhataTools } from "./tools";
+import { createKhataTools, paymentLinkApproval } from "./tools";
 
 // Tools are called directly here; the agent loop itself is covered in khata-agent.test.ts.
 const ctx = { toolCallId: "t1", messages: [], context: {} } as never;
@@ -630,6 +630,20 @@ describe("checkGstPortal", () => {
   it("says where the answer would go when the shop has no chat app linked", async () => {
     const webOnly = createKhataTools(store, "S", { portal: { start: async () => "no_inbox" as const } });
     expect(await webOnly.checkGstPortal.execute!({ question: "HSN for makhana?" }, ctx)).toMatchObject({ status: "no_inbox", hint: expect.stringContaining("Connect Telegram") });
+  });
+});
+
+describe("paymentLinkApproval", () => {
+  it("puts the amount the link will ask for on the owner's button", async () => {
+    // Live, the button said "their full balance", so the owner approved without seeing ₹650.
+    await tools.recordCredit.execute!({ customerName: "Ramesh", amount: 650 }, ctx);
+    expect(await paymentLinkApproval(store, { customerName: "Ramesh" })).toEqual({ type: "user-approval", reason: "₹650 (full balance)" });
+    expect(await paymentLinkApproval(store, { customerName: "Ramesh", amount: 200 })).toEqual({ type: "user-approval", reason: "₹200" });
+  });
+
+  it("still asks, with nothing to show, when the tool will refuse", async () => {
+    expect(await paymentLinkApproval(store, { customerName: "Spaceship" })).toEqual({ type: "user-approval" });
+    expect(await paymentLinkApproval(store, { customerName: "Fatima" })).toEqual({ type: "user-approval" }); // owes nothing
   });
 });
 

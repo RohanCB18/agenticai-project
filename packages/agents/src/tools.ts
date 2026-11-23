@@ -82,6 +82,19 @@ async function amountDue(store: KhataStore, customer: Customer, amount?: number)
   return { ok: true, amountPaise };
 }
 
+/**
+ * What the owner is asked to approve for a payment link: the amount it will ask for, worked out
+ * here, because the model often leaves it out ("their full balance" told the owner nothing). With
+ * no amount to show (an unknown customer, nothing due), the tool will say so after the button.
+ */
+export async function paymentLinkApproval(store: KhataStore, input: { customerName: string; amount?: number }) {
+  const r = await resolveCustomer(store, input.customerName);
+  if (!r.ok) return { type: "user-approval" as const };
+  const due = await amountDue(store, r.customer, input.amount);
+  if (!due.ok) return { type: "user-approval" as const };
+  return { type: "user-approval" as const, reason: `${formatINR(due.amountPaise)}${input.amount ? "" : " (full balance)"}` };
+}
+
 async function resolveCustomer(store: KhataStore, name: string): Promise<Resolved> {
   const matches = rankByName(name, await store.listCustomers());
   const [best, second] = matches;

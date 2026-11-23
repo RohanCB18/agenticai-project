@@ -322,7 +322,8 @@ function approvalPrompt(approval: PendingApproval, messages: ModelMessage[]) {
   }
   if (approval.toolName === "sendPaymentLink") {
     const { customerName, amount } = (approval.input ?? {}) as { customerName?: string; amount?: number };
-    const what = amount ? formatINR(rupeesToPaise(amount)) : "their full balance";
+    // The amount the code worked out (the full balance when none was said), not the model's words.
+    const what = approval.reason ?? (amount ? formatINR(rupeesToPaise(amount)) : "their full balance");
     return `🔐 Needs your OK\n\nSend ${customerName ?? "the customer"} a UPI payment link for ${what}?`;
   }
   return `🔐 Needs your OK: ${approval.toolName}`;

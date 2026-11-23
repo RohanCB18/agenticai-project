@@ -1,10 +1,22 @@
 import "server-only";
 import { createHmac, timingSafeEqual } from "node:crypto";
+import { romanise } from "@munshi/agents";
 
 // Cashfree Payment Links, API version 2026-01-01.
 // Docs: https://www.cashfree.com/docs/api-reference/payments/latest/payment-links/create-payment-link
 
 const API_VERSION = "2026-01-01";
+
+/**
+ * A customer's name as Cashfree takes it: a person's name in English letters. It refuses
+ * "ಸುರೇಶ್" ("should be a person name"), so a customer the owner saved in Kannada, Hindi or Tamil
+ * script could never be sent a link. Munshi keeps the owner's spelling; Cashfree gets "Suresh".
+ */
+export function cashfreeName(name: string) {
+  // Long vowels come out doubled ("kumaar", "phaatimaa"); a customer reads the name on the page.
+  const latin = romanise(name).replace(/[^A-Za-z .'-]/g, " ").replace(/([aiu])\1/g, "$1").replace(/\s+/g, " ").trim();
+  return latin ? latin.replace(/(^|\s)[a-z]/g, (c) => c.toUpperCase()) : "Customer";
+}
 
 export class CashfreeNotConfiguredError extends Error {
   constructor() {
@@ -82,7 +94,7 @@ export function createPaymentLink(input: CreateLinkInput): Promise<CashfreeLink>
       link_amount: input.amountPaise / 100,
       link_currency: "INR",
       link_purpose: input.purpose.slice(0, 500),
-      customer_details: { customer_name: input.customer.name, customer_phone: tenDigit(input.customer.phone) },
+      customer_details: { customer_name: cashfreeName(input.customer.name), customer_phone: tenDigit(input.customer.phone) },
       link_notify: { send_sms: cashfreeSendsSms(), send_email: false },
       link_expiry_time: input.expiresAt.toISOString(),
       // Customers go straight to UPI (the app on a phone, a QR on a computer). In the sandbox, that
@@ -122,7 +134,7 @@ export async function createUpiQr(input: CreateQrInput): Promise<{ qrPng: string
       order_currency: "INR",
       customer_details: {
         customer_id: input.customer.id,
-        customer_name: input.customer.name,
+        customer_name: cashfreeName(input.customer.name),
         // Orders require a phone; a walk-in customer may not have one on file.
         customer_phone: input.customer.phone ? tenDigit(input.customer.phone) : "9999999999",
       },

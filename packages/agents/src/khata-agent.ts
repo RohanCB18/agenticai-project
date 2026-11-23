@@ -9,7 +9,7 @@ import type { SupplierAgent } from "./supplier";
 import { findMentions, type Mention, mentionsHint, mentionsNote } from "./mentions";
 import { completedActions, reportsEntry } from "./receipts";
 import { forgetOldToolResults } from "./threads";
-import { createKhataTools } from "./tools";
+import { createKhataTools, paymentLinkApproval } from "./tools";
 import type { DetectedLanguage } from "./voice";
 
 const REPLY_LANGUAGES: Record<string, string> = {
@@ -24,15 +24,31 @@ const REPLY_LANGUAGES: Record<string, string> = {
   "pa-IN": "Punjabi",
 };
 
+const SCRIPTS: Record<string, string> = {
+  "hi-IN": "Devanagari (हिंदी)",
+  "kn-IN": "Kannada script (ಕನ್ನಡ)",
+  "ta-IN": "Tamil script (தமிழ்)",
+  "te-IN": "Telugu script (తెలుగు)",
+  "bn-IN": "Bengali script (বাংলা)",
+  "ml-IN": "Malayalam script (മലയാളം)",
+  "mr-IN": "Devanagari (मराठी)",
+  "gu-IN": "Gujarati script (ગુજરાતી)",
+  "pa-IN": "Gurmukhi (ਪੰਜਾਬੀ)",
+};
+
 /** The instruction that pins a reply to the owner's latest language. Null when it can't be named. */
 export function replyLanguageRule(detected: DetectedLanguage): string | null {
   const latin = detected.scriptCode === "Latn";
   if (detected.languageCode === "en-IN") return "The owner's latest message is in English. Reply only in English, with no Hindi words, even if earlier messages were in Hindi.";
   const name = REPLY_LANGUAGES[detected.languageCode];
   if (!name) return null;
+  // Live, a third of Kannada-script questions about balances and stock came back in English letters:
+  // the examples in the instructions are romanised, and the tools answer in English. So the script
+  // is named, with a word of it.
+  const script = SCRIPTS[detected.languageCode] ?? "its own script";
   return latin
     ? `The owner's latest message is ${name} written in English letters. Reply in ${name}, written in English letters.`
-    : `The owner's latest message is in ${name}. Reply in ${name}, in its own script.`;
+    : `The owner's latest message is in ${name}, in ${script}. Reply only in ${name} written in ${script}, names included, never in English letters, even though the tools answer in English.`;
 }
 
 /** Read on every step: earlier replies in the chat quote figures that may have changed since. */
@@ -170,7 +186,12 @@ export function createKhataAgent({ model, store, shopName, language, approvalSec
     tools: { ...createKhataTools(store, shopName, { supplier, knowledge, charts, portal }), handOff: handOffTool },
     // Money only moves after the owner says yes; approvals are HMAC-signed so a
     // client cannot forge one.
-    toolApproval: { sendPaymentLink: "user-approval", placeSupplierOrder: "user-approval", paySupplier: "user-approval" },
+    toolApproval: {
+      // The request carries the amount, worked out from the khata, for the owner to see on the button.
+      sendPaymentLink: (input) => paymentLinkApproval(store, input),
+      placeSupplierOrder: "user-approval",
+      paySupplier: "user-approval",
+    },
     experimental_toolApprovalSecret: approvalSecret,
     stopWhen: isStepCount(8),
     telemetry: { functionId: "munshi-agent" }, // names the agent's spans in Langfuse when tracing is on

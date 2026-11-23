@@ -69,7 +69,7 @@ uv sync --all-packages && uv run pytest -q
 | Customer isn't in the shop | `sendPaymentLink` (owner approves first) | Cashfree webhook, or `checkPayment` |
 | Customer is at the counter | `showPaymentQr` (shown only to the owner) | Cashfree webhook, or `checkPayment` |
 
-Webhook and `checkPayment` share one settlement path, so a payment reported twice is recorded once. Webhooks need a public https URL in `PUBLIC_APP_URL`; `checkPayment` ("Ramesh ka payment aaya?") works without one. Links are UPI-only and open straight in a UPI app (a QR code on a computer). In the sandbox that QR code is one no real UPI app can pay, so sandbox links also list net banking, whose test bank lets a tester finish a payment (UPI intent stays off there, because it skips the list).
+Webhook and `checkPayment` share one settlement path, so a payment reported twice is recorded once. Webhooks need a public https URL in `PUBLIC_APP_URL`; `checkPayment` ("Ramesh ka payment aaya?") works without one. Links are UPI-only and open straight in a UPI app (a QR code on a computer). In the sandbox that QR code is one no real UPI app can pay, so sandbox links also list net banking, whose test bank lets a tester finish a payment (UPI intent stays off there, because it skips the list). The owner's button shows the amount the link will ask for, worked out from the khata ("₹650 (full balance)"), not the model's words: live, it said "their full balance" and nothing more. A new link or QR closes the customer's older open ones, so nobody can pay twice (live, Ramesh had three ₹650 links open at once).
 
 **QR limit:** the QR uses Cashfree's Order Pay API. It works in sandbox, but in production Cashfree only enables it for accounts showing over Rs 1 crore annual turnover. Without that, `showPaymentQr` reports `qr_unavailable` and Munshi offers a payment link instead.
 
@@ -110,7 +110,16 @@ Measured with `npm run eval -w @munshi/agents` (real Sarvam, in-memory shop): 39
 | Median / p90 reply time | 2.7 s / 4.5 s | 2.8 s / 5.7 s |
 | Input tokens per message | 6,067 | 5,476 |
 
-One run each, so read it as a direction, not a guarantee (results in `packages/agents/evals/results`; desks runs have scored 77 or 78 of 78). The one agent read "Akki eshtu ide?" (Kannada: how much rice is left?) as a customer called Akki. Live on Telegram, the desks did too: right after a chat about Ramesh, even the stock desk passed "Akki" on as a customer. Desks didn't fix that; telling the model what the word is in this shop's records did. `evals/multiturn.eval.ts` replays that chat. Both setups once said "Sugar 5 kg stock kam kar diya" without a tool call; the claim guard now catches stock-change wording too. Cash and UPI collection are both "money in" to the router, so both money desks can record a cash payment. `MUNSHI_SPECIALISTS=off` goes back to one agent.
+One run each, so read it as a direction, not a guarantee (results in `packages/agents/evals/results`; desks runs have scored 77 or 78 of 78). The one agent read "Akki eshtu ide?" (Kannada: how much rice is left?) as a customer called Akki. Live on Telegram, the desks did too: right after a chat about Ramesh, even the stock desk passed "Akki" on as a customer. Desks didn't fix that; telling the model what the word is in this shop's records did. `evals/multiturn.eval.ts` replays that chat. Both setups once said "Sugar 5 kg stock kam kar diya" without a tool call; the claim guard now catches stock-change wording too. Cash and UPI collection are both "money in" to the router, so both money desks can record a cash payment. `MUNSHI_SPECIALISTS=off` goes back to one agent. Re-run on 23 Nov 2026 after the rules below changed: 39 of 39, held-out 12 of 12, no wrong writes.
+
+### Kannada, end to end
+
+`apps/web/src/lib/kannada.live.test.ts` (`KANNADA_LIVE=1`) asks every feature in Kannada, with real Sarvam, real language detection and the real GST knowledge base: udhaar, payments (including amounts said as words, "ನಾನೂರ ಐವತ್ತು"), sales, expenses, balances, history, new customers, phone numbers, corrections, payment links, QR, payment checks, stock, new products, low-stock alerts, GST answers, tagging, charts, memory, chit-chat, and Kannada in English letters. Each case checks the tool, the effect on the khata and that the reply is in Kannada script (or English letters, if that's how the owner wrote). 29 of 29, twice. `evals/voice-kannada.eval.ts` does the voice path with nobody speaking: Bulbul says a Kannada entry, Saaras hears it as a voice note would be heard, Munshi acts and Bulbul speaks the reply (6 of 6).
+
+What it found:
+
+- **Replies in the wrong script.** The first run answered 3 Kannada-script questions in Kannada written in English letters: every language example in the instructions was romanised, and the tools answer in English. The reply rule now names the script ("Kannada script (ಕನ್ನಡ)", never English letters) and the instructions carry a Kannada-script example.
+- **Payment links for names in Kannada script.** A customer added as "ಸುರೇಶ್" could never be sent a link: Cashfree refuses names that aren't in English letters ("should be a person name"). Munshi keeps the owner's spelling and sends Cashfree the romanised name ("Suresh").
 
 ## Receipts, not promises
 

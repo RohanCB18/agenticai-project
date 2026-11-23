@@ -64,7 +64,8 @@ describe("an approval the owner never answered", () => {
 describe("reply language", () => {
   it("names the language and script of the owner's message", () => {
     expect(replyLanguageRule({ languageCode: "kn-IN", scriptCode: "Latn" })).toContain("Kannada, written in English letters");
-    expect(replyLanguageRule({ languageCode: "kn-IN", scriptCode: "Knda" })).toContain("Kannada, in its own script");
+    expect(replyLanguageRule({ languageCode: "kn-IN", scriptCode: "Knda" })).toContain("Reply only in Kannada written in Kannada script (ಕನ್ನಡ)");
+    expect(replyLanguageRule({ languageCode: "kn-IN", scriptCode: "Knda" })).toContain("never in English letters");
     expect(replyLanguageRule({ languageCode: "en-IN", scriptCode: "Latn" })).toContain("only in English");
     expect(replyLanguageRule({ languageCode: "xx-IN", scriptCode: "Latn" })).toBeNull();
   });

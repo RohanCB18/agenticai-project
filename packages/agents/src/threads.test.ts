@@ -18,6 +18,11 @@ describe("threads", () => {
     expect(pendingApprovals(asked)).toEqual([{ approvalId: "appr_1", toolCallId: "call_1", toolName: "sendPaymentLink", input: { customer: "Ramesh" } }]);
   });
 
+  it("keeps the amount the code put on the request, for the owner's button", () => {
+    const withAmount: ModelMessage[] = [asked[0]!, { ...asked[1]!, content: [(asked[1]!.content as never[])[0]!, { type: "tool-approval-request", approvalId: "appr_1", toolCallId: "call_1", reason: "₹650 (full balance)" }] } as ModelMessage];
+    expect(pendingApprovals(withAmount)[0]).toMatchObject({ toolName: "sendPaymentLink", reason: "₹650 (full balance)" });
+  });
+
   it("treats an answered approval as done", () => {
     expect(pendingApprovals([...asked, approvalResponse("appr_1", true)])).toEqual([]);
   });

@@ -202,6 +202,8 @@ export function createSupabaseKhataStore(db: SupabaseClient, merchantId: string,
 
     async createPaymentLink({ customer, amountPaise, purpose }): Promise<PaymentLink> {
       if (!customer.phone) throw new Error("Customer has no phone number");
+      // One open request per customer, as for QRs: live, Ramesh had three ₹650 links open at once.
+      await closeOpenRequests(customer.id);
 
       // The owner already approved in chat (signed AI SDK approval). Record that decision
       // in the approvals table too, so the audit trail lives in the database.

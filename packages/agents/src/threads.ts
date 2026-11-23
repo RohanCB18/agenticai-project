@@ -3,19 +3,22 @@ import type { ModelMessage } from "ai";
 // Conversation threads for channels with no browser to hold the history (WhatsApp, phone).
 // The server stores the AI SDK model messages and replays them on each new message.
 
-export type PendingApproval = { approvalId: string; toolCallId: string; toolName: string; input: unknown };
+/** `reason` is what the code worked out for the owner to see, e.g. the amount a link will ask for. */
+export type PendingApproval = { approvalId: string; toolCallId: string; toolName: string; input: unknown; reason?: string };
 
 /** Approval requests the owner hasn't answered yet, oldest first. */
 export function pendingApprovals(messages: ModelMessage[]): PendingApproval[] {
   const calls = new Map<string, { toolName: string; input: unknown }>();
-  const requested: { approvalId: string; toolCallId: string }[] = [];
+  const requested: { approvalId: string; toolCallId: string; reason?: string }[] = [];
   const answered = new Set<string>();
 
   for (const message of messages) {
     if (typeof message.content === "string") continue;
     for (const part of message.content) {
       if (part.type === "tool-call") calls.set(part.toolCallId, { toolName: part.toolName, input: part.input });
-      else if (part.type === "tool-approval-request" && !part.isAutomatic) requested.push({ approvalId: part.approvalId, toolCallId: part.toolCallId });
+      else if (part.type === "tool-approval-request" && !part.isAutomatic) {
+        requested.push({ approvalId: part.approvalId, toolCallId: part.toolCallId, ...(part.reason ? { reason: part.reason } : {}) });
+      }
       else if (part.type === "tool-approval-response") answered.add(part.approvalId);
     }
   }

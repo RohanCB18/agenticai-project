@@ -105,7 +105,8 @@ export function ToolPart({ part, onDecision }: { part: Part; onDecision: Decide 
         <p className="text-sm uppercase tracking-wider text-accent">Needs your OK</p>
         <p>
           Send <strong>{input.customerName}</strong> a UPI link for{" "}
-          <strong>{input.amount ? `₹${input.amount.toLocaleString("en-IN")}` : "their full balance"}</strong>?
+          {/* The amount the server worked out (the full balance when none was said), not the model's words. */}
+          <strong>{part.approval.requestReason ?? (input.amount ? `₹${input.amount.toLocaleString("en-IN")}` : "their full balance")}</strong>?
         </p>
         <div className="flex gap-2">
           <button onClick={() => onDecision({ id: part.approval.id, approved: true })} className="rounded-md bg-accent px-4 py-2 font-medium text-on-accent">
