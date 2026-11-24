@@ -503,6 +503,17 @@ describe("paying suppliers", () => {
   it("shows what is due and where it would go", async () => {
     const out = await tools.supplierDues.execute!({ supplierName: "sharma traders" }, ctx);
     expect(out).toMatchObject({ status: "dues", supplier: "Sharma Traders", payTo: "UPI su•••@upi", totalDue: "₹5,700" });
+    expect(out).toMatchObject({ hint: expect.stringContaining("whether to pay ₹5,700") });
+  });
+
+  it("asks about the amount the owner named, not the whole due", async () => {
+    // Live, "Sharma Traders ko 100 rupaye payment kar do" got "poora 3,900 payment karun?".
+    const out = await tools.supplierDues.execute!({ supplierName: "Sharma Traders", amount: 100 }, ctx);
+    expect(out).toMatchObject({ status: "dues", totalDue: "₹5,700", ownerAsked: "₹100" });
+    expect(out).toMatchObject({ hint: expect.stringContaining("one yes-or-no question about paying ₹100, never a different amount") });
+    expect(await tools.supplierDues.execute!({ supplierName: "Sharma Traders", amount: 9000 }, ctx)).toMatchObject({
+      hint: expect.stringContaining("more than the ₹5,700 due"),
+    });
   });
 
   it("pays a verified supplier and stops showing the paid order as due", async () => {

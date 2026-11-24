@@ -2,7 +2,7 @@ import "server-only";
 import type { Balance, Customer, KhataStore, LedgerEntry, PaymentLink, Product, Supplier, SupplierPayout } from "@munshi/agents";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { cashfreeSendsSms, createPaymentLink as createCashfreeLink, createUpiQr } from "@/lib/cashfree";
-import { createTransfer, getTransfer, maskedAccount, payoutStatus, type Transfer } from "@/lib/cashfree-payouts";
+import { createTransfer, getTransfer, maskedAccount, payoutStatus, type Transfer, transferEvent } from "@/lib/cashfree-payouts";
 import { cancelOpenRequests, reconcilePayments } from "@/lib/payments";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { settlePayout } from "@/lib/supplier-payouts";
@@ -481,7 +481,9 @@ export function createSupabaseKhataStore(db: SupabaseClient, merchantId: string,
           throw error;
         }
         if (known === "unknown") {
-          // Cashfree couldn't say either way: leave it open for the webhook to settle.
+          // Cashfree couldn't say either way: leave it open for the webhook, or Munshi's own status
+          // checks (reconcilePayouts), to settle.
+          console.error(`[munshi] payout ${transferId}: Cashfree didn't confirm it either way:`, error instanceof Error ? error.message : error);
           await admin.from("approvals").update({ status: "executed" }).eq("id", approval.id);
           return { id: payout.id, status: "pending", amountPaise, utr: null, reason: "Cashfree hasn't confirmed it yet" };
         }
@@ -489,14 +491,8 @@ export function createSupabaseKhataStore(db: SupabaseClient, merchantId: string,
       }
 
       const status = payoutStatus(transfer.status);
-      const settled = await settlePayout(admin, {
-        transferId,
-        status,
-        statusCode: transfer.status_code ?? null,
-        description: transfer.status_description ?? null,
-        utr: transfer.transfer_utr || null,
-        cfTransferId: transfer.cf_transfer_id === undefined ? null : String(transfer.cf_transfer_id),
-      });
+      console.info(`[munshi] payout ${transferId}: Cashfree says ${transfer.status} (${transfer.status_code ?? "-"})`);
+      const settled = await settlePayout(admin, { ...transferEvent(transfer), transferId });
       await admin.from("approvals").update({ status: status === "failed" ? "failed" : "executed" }).eq("id", approval.id);
       return { id: payout.id, status: settled?.status ?? status, amountPaise, utr: transfer.transfer_utr || null, reason: transfer.status_description ?? null };
     },

@@ -104,7 +104,11 @@ describe("what the owner sees", () => {
   it("says when a payout landed, failed or came back, and nothing while on its way", () => {
     const base = { supplier_name: "Sharma Traders", amount_paise: 420000 };
     expect(payoutNotice({ ...base, status: "success" }, { utr: "UTR1", description: null })).toBe("✅ Paid Sharma Traders ₹4,200. UTR UTR1.");
-    expect(payoutNotice({ ...base, status: "failed" }, { utr: null, description: "Invalid account" })).toContain("failed (Invalid account). The money stays");
+    expect(payoutNotice({ ...base, status: "failed" }, { utr: null, description: "Invalid account" })).toContain("failed (Invalid account). Nothing was paid; the money stays");
+    // Cashfree's code for a setting the owner must fix, in words they can act on.
+    expect(payoutNotice({ ...base, status: "failed" }, { utr: null, description: "Error selecting fund source", statusCode: "ERROR_SELECTING_FUND_SOURCE" })).toContain(
+      "check Fund Sources in your Cashfree Payouts dashboard",
+    );
     expect(payoutNotice({ ...base, status: "reversed" }, { utr: null, description: null })).toContain("sent back");
     expect(payoutNotice({ ...base, status: "pending" }, { utr: null, description: null })).toBeNull();
   });

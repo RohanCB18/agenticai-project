@@ -8,7 +8,8 @@ import { detectLanguage } from "../src/voice";
 
 // Paying a supplier with real Sarvam, over two turns as on Telegram. Live, Munshi asked "poora
 // 3,900 payment karun?" and every "haan" after it went to a desk that can't pay a supplier: four
-// empty replies, and no button. The answer must lead to paySupplier and the owner's button.
+// empty replies, and no button. The answer must lead to paySupplier and the owner's button, for
+// the ₹100 the owner named (once fixed, "haan" paid the whole ₹3,900 Munshi had asked about).
 //   npm run eval -w @munshi/agents -- pay-supplier     (needs SARVAM_API_KEY)
 
 const key = process.env.SARVAM_API_KEY;
@@ -61,6 +62,7 @@ for (const answer of ["haan", "HAA", "Haan, pay karo."]) {
     }
     console.log(`  button: ${approvals.map((a) => `${a.toolName} ${JSON.stringify(a.input)}`).join(", ") || "none"}`);
     expect(firstTools).toContain("supplierDues");
-    expect(approvals[0]).toMatchObject({ toolName: "paySupplier" });
+    // The owner said 100: live, Munshi asked about the whole ₹3,900 instead, and "haan" paid that.
+    expect(approvals[0]).toMatchObject({ toolName: "paySupplier", input: { amount: 100 } });
   });
 }

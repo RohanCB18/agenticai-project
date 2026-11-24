@@ -29,6 +29,7 @@ import { BILL_APPROVAL_PREFIX, decideBill, handleBillPhoto } from "@/lib/bills";
 import { answerReminders, startReminders } from "@/lib/reminder-runs";
 import { paymentNote, whatsappButton } from "@/lib/reminders";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { reconcilePayouts, watchPayouts } from "@/lib/supplier-payouts";
 import { traced } from "@/lib/telemetry";
 import { ON_DEMAND_KEY, REMINDER_APPROVAL_PREFIX } from "@/workflows/reminder-hook";
 import type { ChannelSender, Inbound, LinkButton, MessagingChannel } from "./types";
@@ -43,6 +44,9 @@ const HELP =
 
 /** Time for thinking in one turn: the webhook function is stopped at 60 s (maxDuration). */
 const TURN_BUDGET_MS = 45_000;
+const FUNCTION_LIMIT_MS = 55_000; // what's safe to use of the 60 s
+/** How long to watch a payout that just started (Cashfree settles UPI, or refuses, in seconds). */
+const PAYOUT_WATCH_MS = 40_000;
 const FAILED_TURN = "⚠️ Sorry, I couldn't finish that just now. Please send it again in a minute.";
 // Asking again is safe: a new payment link cancels the customer's open one, and the same
 // wholesaler quote always gives the same order.
@@ -95,6 +99,10 @@ export async function handleInbound(inbound: Inbound, sender: ChannelSender) {
     if (inbound.approved) await sender.showWorking?.(chatId, "typing");
     return;
   }
+
+  // Supplier payments still on their way: ask Cashfree, in case its webhook never came. The owner
+  // hears how one ended before the answer to whatever they asked.
+  await reconcilePayouts(admin, merchant.id).catch((error: unknown) => console.error("[munshi] payout check failed:", error instanceof Error ? error.message : error));
 
   const { data: thread } = await admin.from("agent_threads").select("messages").eq("merchant_id", merchant.id).eq("channel", channel).maybeSingle();
   let messages = (thread?.messages ?? []) as ModelMessage[];
@@ -232,6 +240,13 @@ export async function handleInbound(inbound: Inbound, sender: ChannelSender) {
           ? { yes: "✅ Haan, pay karo", no: "❌ Nahi" }
           : undefined;
     await sender.sendApproval(chatId, approvalPrompt(approval, messages), approval.approvalId, labels);
+  }
+
+  // A supplier payment started this turn: watch it for the rest of the turn's time, so the owner
+  // hears within seconds whether it landed or failed, webhook or not.
+  if (toolOutputs(responseMessages, "paySupplier").some((output) => (output as { status?: string }).status === "payout_started")) {
+    const forMs = Math.min(PAYOUT_WATCH_MS, FUNCTION_LIMIT_MS - (Date.now() - startedAt));
+    await watchPayouts(admin, merchant.id, { forMs }).catch((error: unknown) => console.error("[munshi] payout watch failed:", error instanceof Error ? error.message : error));
   }
 }
 

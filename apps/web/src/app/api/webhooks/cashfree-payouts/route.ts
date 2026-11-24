@@ -15,6 +15,8 @@ export async function POST(request: Request) {
   const delivery = payoutDelivery(raw, request.headers.get("x-webhook-timestamp"), request.headers.get("x-webhook-signature"));
   // Answer 200 to everything that isn't a transfer update (low balance alerts, the dashboard's test
   // event) so Cashfree doesn't count it as a failed delivery and switch the webhook off.
+  // Logged, so a webhook that never comes (or is refused) shows up in the logs.
+  console.info(`[munshi] payouts webhook: ${delivery.kind === "event" ? `${delivery.event.transferId} ${delivery.event.status} (${delivery.event.statusCode ?? "-"})` : delivery.kind}`);
   if (delivery.kind === "ignore") return Response.json({ ignored: true });
   if (delivery.kind === "reject") return new Response("Invalid signature", { status: 401 });
 

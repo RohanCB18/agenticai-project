@@ -131,18 +131,23 @@ export function payoutStatus(status: string | undefined): PayoutStatus {
 
 export type PayoutEvent = { transferId: string; cfTransferId: string | null; status: PayoutStatus; statusCode: string | null; description: string | null; utr: string | null };
 
+/** What Cashfree says about one transfer (its answer to a status check, or a webhook's data). */
+export function transferEvent(transfer: Transfer): PayoutEvent {
+  return {
+    transferId: transfer.transfer_id,
+    cfTransferId: transfer.cf_transfer_id === undefined ? null : String(transfer.cf_transfer_id),
+    status: payoutStatus(transfer.status),
+    statusCode: transfer.status_code ?? null,
+    description: transfer.status_description ?? null,
+    utr: transfer.transfer_utr || null,
+  };
+}
+
 /** A transfer webhook (TRANSFER_SUCCESS, _ACKNOWLEDGED, _FAILED, _REVERSED, _REJECTED), or null. */
 export function parsePayoutEvent(raw: string): PayoutEvent | null {
   const event = JSON.parse(raw) as { type?: string; data?: Transfer };
   if (!event.type?.startsWith("TRANSFER_") || !event.data?.transfer_id) return null;
-  return {
-    transferId: event.data.transfer_id,
-    cfTransferId: event.data.cf_transfer_id === undefined ? null : String(event.data.cf_transfer_id),
-    status: payoutStatus(event.data.status),
-    statusCode: event.data.status_code ?? null,
-    description: event.data.status_description ?? null,
-    utr: event.data.transfer_utr || null,
-  };
+  return transferEvent(event.data);
 }
 
 /** Payouts webhooks are signed like Payment Links ones, with the Payouts client secret. */

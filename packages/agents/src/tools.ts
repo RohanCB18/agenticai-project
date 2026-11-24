@@ -166,6 +166,22 @@ async function resolveSupplier(store: KhataStore, name: string): Promise<Resolve
 
 const NO_SUPPLIER = { status: "no_supplier", hint: "Tell the owner no wholesaler is connected to Munshi yet." };
 
+/**
+ * The one yes-or-no question to ask before paying a supplier: about the amount the owner named,
+ * or the whole due if they named none. Live, "Sharma Traders ko 100 rupaye payment kar do" got
+ * "poora 3,900 payment karun?", and "haan" paid ₹3,900.
+ */
+export function payQuestionHint(askedPaise: number | null, duePaise: number) {
+  const then = "Only if they say yes, call paySupplier with that amount; the owner then approves it with a button.";
+  if (askedPaise === null) {
+    if (duePaise === 0) return "Nothing is due to this supplier. Tell the owner, and ask how much to pay if they still want to.";
+    return `Tell the owner ${formatINR(duePaise)} is due and where it would go, then ask one yes-or-no question: whether to pay ${formatINR(duePaise)}. ${then}`;
+  }
+  const asked = formatINR(askedPaise);
+  const over = askedPaise > duePaise ? ` It is more than the ${formatINR(duePaise)} due: say so.` : "";
+  return `The owner asked to pay ${asked}. Say where it would go (you may mention the ${formatINR(duePaise)} due), then ask one yes-or-no question about paying ${asked}, never a different amount.${over} ${then}`;
+}
+
 const HSN_CODE = /^\d{4}(\s?\d{2}){0,2}$/;
 
 type GstOption = { gst: string; gstRate: number; item: string | null; citation: string | null };
@@ -906,8 +922,11 @@ export function createKhataTools(store: KhataStore, shopName = "your shop", opti
     supplierDues: tool({
       description:
         "What the shop owes a supplier or wholesaler (their orders not yet paid) and where a payment would go. Call before paySupplier and tell the owner the amount and the account.",
-      inputSchema: z.object({ supplierName: z.string() }),
-      execute: async ({ supplierName }) => {
+      inputSchema: z.object({
+        supplierName: z.string(),
+        amount: Rupees.optional().describe("The amount the owner said to pay, if they named one ('Sharma ko 100 de do' is 100). Leave out if they didn't."),
+      }),
+      execute: async ({ supplierName, amount }) => {
         const r = await resolveSupplier(store, supplierName);
         const name = r.ok ? r.supplier.name : supplierName;
         const orders = await store.unpaidSupplierOrders(name);
@@ -917,13 +936,15 @@ export function createKhataTools(store: KhataStore, shopName = "your shop", opti
         if (!r.supplier.account || !r.supplier.verified) {
           return { status: "no_payout_account", supplier: name, unpaidOrders: unpaid, totalDue: formatINR(due), hint: ADD_ACCOUNT_HINT };
         }
+        const askedPaise = amount ? rupeesToPaise(amount) : null;
         return {
           status: "dues",
           supplier: name,
           payTo: r.supplier.account,
           unpaidOrders: unpaid,
           totalDue: formatINR(due),
-          hint: "Tell the owner what is due and where it would go, and ask whether to pay. Only if they say yes, call paySupplier with the amount.",
+          ...(askedPaise ? { ownerAsked: formatINR(askedPaise) } : {}),
+          hint: payQuestionHint(askedPaise, due),
         };
       },
     }),
@@ -961,7 +982,7 @@ export function createKhataTools(store: KhataStore, shopName = "your shop", opti
         return {
           status: "payout_started",
           ...base,
-          hint: "The bank transfer has started. Tell the owner it is on its way and that Munshi will message them when it reaches the supplier. Never say it has reached them.",
+          hint: "Cashfree has taken the payment but not confirmed it yet: it can still be refused. Tell the owner it has started and that Munshi will message them as soon as Cashfree says it reached the supplier or failed. Never say it has reached them.",
         };
       },
     }),

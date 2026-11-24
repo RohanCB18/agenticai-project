@@ -3,8 +3,10 @@ import { connection } from "next/server";
 import { Suspense } from "react";
 import { formatINR } from "@munshi/db";
 import { getCurrentMerchant } from "@/lib/auth";
-import { maskedAccount } from "@/lib/cashfree-payouts";
+import { maskedAccount, payoutsConfigured } from "@/lib/cashfree-payouts";
+import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
+import { reconcilePayouts } from "@/lib/supplier-payouts";
 import { stopPayouts } from "./actions";
 import { PayoutAccountForm } from "./payout-account-form";
 
@@ -23,6 +25,12 @@ const STATUS_LABEL: Record<string, string> = { pending: "On its way", success: "
 async function Suppliers() {
   await connection();
   const merchant = await getCurrentMerchant();
+  // Payments still on their way: ask Cashfree first, so the list below is what really happened.
+  if (payoutsConfigured()) {
+    await reconcilePayouts(createAdminClient(), merchant.id).catch((error: unknown) =>
+      console.error("[munshi] payout check failed:", error instanceof Error ? error.message : error),
+    );
+  }
   const supabase = await createClient();
   const [{ data: suppliers }, { data: payouts }] = await Promise.all([
     supabase.from("suppliers").select("id, name, payout_vpa, payout_account_last4, payout_ifsc, beneficiary_status, beneficiary_verified, cashfree_beneficiary_id").order("name"),

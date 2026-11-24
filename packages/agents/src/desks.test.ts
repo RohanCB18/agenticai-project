@@ -2,7 +2,7 @@ import type { LanguageModelV4CallOptions } from "@ai-sdk/provider";
 import type { ModelMessage } from "ai";
 import { MockLanguageModelV4 } from "ai/test";
 import { describe, expect, it } from "vitest";
-import { deskInstructions, deskTools, handedOffTo, routeMessage } from "./desks";
+import { deskInstructions, deskTools, endsWithQuestion, handedOffTo, routeMessage } from "./desks";
 
 const usage = {
   inputTokens: { total: 10, noCache: 10, cacheRead: undefined, cacheWrite: undefined },
@@ -44,6 +44,13 @@ describe("routeMessage", () => {
     expect(promptText(prompts[1]!)).not.toContain("Link bhejun?");
   });
 
+  it("counts a reply as a question when it ends by asking, even with a short note after", () => {
+    expect(endsWithQuestion("Link bhejun?")).toBe(true);
+    expect(endsWithQuestion("Unko ₹100 bhejun? UPI su•••@upi pe jayega.")).toBe(true);
+    expect(endsWithQuestion("Kya likhun? Theek hai, Ramesh ka 450 udhaar likh diya, aur Fatima ka 200 bhi khata mein jod diya hai.")).toBe(false);
+    expect(endsWithQuestion("Ramesh ka balance 0 rupaye hai.")).toBe(false);
+  });
+
   it("sends a short answer back to the desk whose tool asked the question", async () => {
     // Live: "poora 3,900 payment karun?" came from the stock desk (supplierDues), and each "haan"
     // was routed to the collections desk, which can't pay a supplier.
@@ -57,6 +64,10 @@ describe("routeMessage", () => {
     for (const answer of ["haan", "HAA", "Haan, pay karo."]) {
       expect(await routeMessage(model, [...asked, { role: "user", content: answer }], false)).toMatchObject({ desk: "stock", by: "answer" });
     }
+    // A short note after the question still makes it a question. Live, "Haan, pay karo." after
+    // "Unko ₹100 bhejun? UPI su•••@upi pe jayega." was recorded as a customer's payment.
+    const noteAfter: ModelMessage[] = [...asked.slice(0, 3), { role: "assistant", content: "Poora baaki ₹3,900 hai. Unko ₹100 bhejun? UPI su•••@upi pe jayega." }];
+    expect(await routeMessage(model, [...noteAfter, { role: "user", content: "Haan, pay karo." }], false)).toMatchObject({ desk: "stock", by: "answer" });
     // With no tool behind the question, the model still decides.
     await routeMessage(model, [{ role: "user", content: "Hi" }, { role: "assistant", content: "Kya madad karun?" }, { role: "user", content: "haan" }], false);
     expect(prompts).toHaveLength(1);
