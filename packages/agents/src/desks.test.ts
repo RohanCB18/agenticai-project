@@ -44,6 +44,24 @@ describe("routeMessage", () => {
     expect(promptText(prompts[1]!)).not.toContain("Link bhejun?");
   });
 
+  it("sends a short answer back to the desk whose tool asked the question", async () => {
+    // Live: "poora 3,900 payment karun?" came from the stock desk (supplierDues), and each "haan"
+    // was routed to the collections desk, which can't pay a supplier.
+    const { model, prompts } = router("collections");
+    const asked: ModelMessage[] = [
+      { role: "user", content: "Sharma Traders ko 100 rupaye payment kar do" },
+      { role: "assistant", content: [{ type: "tool-call", toolCallId: "c1", toolName: "supplierDues", input: { supplierName: "Sharma Traders" } }] },
+      { role: "tool", content: [{ type: "tool-result", toolCallId: "c1", toolName: "supplierDues", output: { type: "json", value: { status: "dues" } } }] },
+      { role: "assistant", content: "Sharma Traders par 3,900 baaki hain, UPI su•••@upi pe jayega. Poora 3,900 payment karun?" },
+    ];
+    for (const answer of ["haan", "HAA", "Haan, pay karo."]) {
+      expect(await routeMessage(model, [...asked, { role: "user", content: answer }], false)).toMatchObject({ desk: "stock", by: "answer" });
+    }
+    // With no tool behind the question, the model still decides.
+    await routeMessage(model, [{ role: "user", content: "Hi" }, { role: "assistant", content: "Kya madad karun?" }, { role: "user", content: "haan" }], false);
+    expect(prompts).toHaveLength(1);
+  });
+
   it("ignores Munshi's last words when it didn't ask anything", async () => {
     // Live: after this balance reply, "Akki eshtu ide" went to the khata desk.
     const { model, prompts } = router("stock");

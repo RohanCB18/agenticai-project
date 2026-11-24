@@ -133,8 +133,8 @@ export async function handleInbound(inbound: Inbound, sender: ChannelSender) {
   }
 
   await sender.showWorking?.(chatId, "typing");
-  const agentFor = (extraNote?: string) =>
-    buildKhataAgent({ db: admin, merchant: { id: merchant.id, shopName: merchant.shop_name, language }, source: channel, channel, extraNote });
+  const agentFor = (extraNote?: string, everyTool = false) =>
+    buildKhataAgent({ db: admin, merchant: { id: merchant.id, shopName: merchant.shop_name, language }, source: channel, channel, extraNote, everyTool });
   // Each run is one Langfuse trace, under this shop and chat. Retries are tagged with why.
   const trace = { merchantId: merchant.id, channel, source: replyLanguage ? "voice" : undefined };
   // The run and its retries share what is left of the turn's time, so it ends while there is still
@@ -160,10 +160,11 @@ export async function handleInbound(inbound: Inbound, sender: ChannelSender) {
       if (claimsUnbackedAction(text, completedActions(responseMessages), askedAboutRepeat(responseMessages))) text = `${text}\n\n${NOTHING_SAVED}`;
     }
     // The model sometimes ends with no words at all. Give it one more turn with any tool results in
-    // hand, told its answer was empty: asked again with nothing new, it came back empty again.
+    // hand, told its answer was empty: asked again with nothing new, it came back empty again. The
+    // retry has every tool: live, a desk without the one it needed came back empty twice in a row.
     if (!text && pendingApprovals([...messages, ...responseMessages]).length === 0) {
       const retry = await traced({ ...trace, reason: "retry:empty-reply" }, () =>
-        agentFor(EMPTY_REPLY_NOTE).generate({ messages: [...messages, ...responseMessages], abortSignal }),
+        agentFor(EMPTY_REPLY_NOTE, true).generate({ messages: [...messages, ...responseMessages], abortSignal }),
       );
       console.warn(`[munshi] ${channel} empty reply; asked again: ${runSummary(retry)}`);
       responseMessages = [...responseMessages, ...retry.responseMessages];

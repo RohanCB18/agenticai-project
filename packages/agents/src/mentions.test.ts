@@ -28,6 +28,14 @@ describe("findMentions", () => {
   it("ignores everyday words, numbers and loose prefixes", () => {
     expect(findMentions("Kitna udhaar baaki hai sab ka? 450", customers, products)).toEqual([]);
   });
+
+  it("knows a supplier, so paying them isn't taken for an expense", () => {
+    // Live, "Sharma Traders ko 100 rupaye payment kar do" was once saved as a ₹100 expense.
+    const suppliers = [{ name: "SHARMA TRADERS", aliases: [] }];
+    const found = findMentions("Sharma Traders ko 100 rupaye payment kar do", customers, products, suppliers);
+    expect(found.filter((m) => m.suppliers).map((m) => [m.word, m.suppliers])).toEqual([["sharma traders", ["SHARMA TRADERS"]]]);
+    expect(mentionsHint(found)).toContain("the supplier SHARMA TRADERS, paid with supplierDues then paySupplier");
+  });
 });
 
 describe("notes from mentions", () => {

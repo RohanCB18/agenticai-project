@@ -28,6 +28,8 @@ export function buildKhataAgent(opts: {
   channel?: Channel;
   extraNote?: string;
   onRoute?: (route: Route) => void;
+  /** One agent with every tool, no desks: the retry when a desk came back with nothing. */
+  everyTool?: boolean;
 }) {
   // Without this secret a client could forge an "approved" payment in the chat history.
   const approvalSecret = process.env.TOOL_APPROVAL_SECRET;
@@ -52,7 +54,7 @@ export function buildKhataAgent(opts: {
     channel: opts.channel,
     extraNote: opts.extraNote,
     // MUNSHI_SPECIALISTS=off goes back to one agent with every tool, without a deploy of code.
-    specialists: process.env.MUNSHI_SPECIALISTS !== "off",
+    specialists: !opts.everyTool && process.env.MUNSHI_SPECIALISTS !== "off",
     onRoute: (route) => {
       console.info(`[munshi] ${opts.source} message -> ${route.desk} desk (${route.by}, ${route.ms}ms)`);
       opts.onRoute?.(route);

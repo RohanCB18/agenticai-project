@@ -37,7 +37,7 @@ for (const c of CASES) {
     const voiceNote = await synthesize({ apiKey: key!, text: c.said, languageCode: "kn-IN", codec: "wav" });
     const heard = await transcribe({
       apiKey: key!,
-      audio: new Blob([voiceNote], { type: "audio/wav" }),
+      audio: new Blob([new Uint8Array(voiceNote)], { type: "audio/wav" }),
       filename: "note.wav",
       keyterms: [...store.customers.map((x) => x.name), ...store.products.map((p) => p.name)],
     });

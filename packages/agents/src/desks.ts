@@ -62,7 +62,7 @@ const RULES = {
   habits: `For payment patterns ("X kab deti hai?"), use paymentHabits rather than memory or guesses.`,
   stock: `Stock that arrived ("10 packet Maggi aaya") is updateStock with a positive change; stock sold or used up is a negative change. "Kya khatam ho raha hai?" means getStock. "Rice 10 kg pe alert karna" (tell me when rice is down to 10 kg) means setReorderLevel. Owners name items in their own language (akki, chawal, sakkare): check getStock before deciding a word is a customer's name. Goods Munshi doesn't know yet are added with addProduct (ask the unit if the owner didn't say it).`,
   restock: `To restock, askSupplierQuote gets a quote from the wholesaler's agent (omit items to quote everything running low). Tell the owner the items, the total and the delivery slot, and what the wholesaler can't supply. Only after the owner says yes, call placeSupplierOrder; the owner then approves it with a button. Never state a price the quote didn't give.`,
-  payout: `To pay a supplier or wholesaler ("Sharma Traders ko payment karo"), call supplierDues and tell the owner what is due and where it would go. Only after the owner says yes, call paySupplier with the amount; the owner then approves it with a button. If there is no verified account, tell the owner to add it in Munshi's dashboard: Munshi can never add or change where money goes. Never say money reached the supplier unless paySupplier returned paid.`,
+  payout: `To pay a supplier or wholesaler ("Sharma Traders ko payment karo"), call supplierDues and tell the owner what is due and where it would go, then ask one yes-or-no question about one amount: the amount the owner named, or the whole due if they named none ("Sharma Traders ko ₹100 bhejun? UPI su•••@upi pe jayega."). Never ask "this or that?": live, "haan" to "₹100 ya poora ₹3,900?" meant nothing. It is a payment to the supplier, never an expense. Only after the owner says yes, call paySupplier with that amount; the owner then approves it with a button. If there is no verified account, tell the owner to add it in Munshi's dashboard: Munshi can never add or change where money goes. Never say money reached the supplier unless paySupplier returned paid.`,
   portal: `checkGstPortal looks an item up on the official GST portal in the background, in about a minute. Use it only when lookupGst found no clear entry for the item, or the owner asks for the portal. For an HSN code, call lookupGst first: its entries carry HSN codes. Never use the portal to tag a product ("HSN laga do"): that is lookupGst, then setProductGst. Never tell the owner an HSN code no official entry showed.`,
   chart: `For a chart or graph ("is mahine ki sale chart mein dikhao", "udhaar ka graph"), call makeChart with what it is about, the period (is mahine = this_month, pichhle mahine = last_month, is hafte = last_7_days) and a short Python program that reads daily.csv, ledger.csv or stock.csv. In a kirana, goods given on udhaar are sales too: unless the owner says cash only, a sales chart is about "sales" and draws cash sales and udhaar. If it returns chart_error, fix the program and call it again once. If it returns nothing_to_chart, no picture was drawn: say so in one sentence. Otherwise the picture goes to the owner by itself: reply with one sentence, amounts from its totals and anything else from its summary.`,
   history: `For what a customer took or paid over a period ("Ramesh ne pichhle mahine kya liya?", "Fatima ne is hafte kitna diya?"), use customerHistory with the number of days (a week is 7, a month is 30). Answer from its entries and notes; never guess what they bought.`,
@@ -218,7 +218,26 @@ export function handedOffTo(messages: ModelMessage[]): Desk | null {
   return null;
 }
 
-export type Route = { desk: Desk; by: "model" | "qr" | "approval" | "fallback"; ms: number; tokens: number };
+export type Route = { desk: Desk; by: "model" | "qr" | "approval" | "answer" | "fallback"; ms: number; tokens: number };
+
+/**
+ * The desk that holds the tool Munshi used just before its question, so a short answer ("haan")
+ * goes back to the desk that asked. Live, "poora 3,900 payment karun?" (asked by the stock desk
+ * after supplierDues) was answered "haan" four times, and the router sent each one to the
+ * collections desk, which can't pay a supplier: four empty replies.
+ */
+export function deskThatAsked(messages: ModelMessage[]): Desk | null {
+  const before = messages.slice(0, -1);
+  let lastOwner = -1;
+  before.forEach((message, i) => {
+    if (message.role === "user") lastOwner = i;
+  });
+  const turn = before.slice(lastOwner + 1);
+  const tools = turn.flatMap((m) => (m.role === "assistant" && Array.isArray(m.content) ? m.content.flatMap((p) => (p.type === "tool-call" ? [p.toolName] : [])) : []));
+  const tool = tools.filter((name) => name !== "handOff").at(-1);
+  if (!tool) return null;
+  return (Object.keys(SPECIALISTS) as Exclude<Desk, "general">[]).find((desk) => (SPECIALISTS[desk].tools as string[]).includes(tool)) ?? null;
+}
 
 const ROUTER_PROMPT = `You route a shop owner's message to one desk of their bookkeeping assistant. The message may be in any Indian language, in its own script or in English letters. Reply with one word only: khata, collections, stock or general.
 
@@ -256,6 +275,10 @@ export async function routeMessage(model: LanguageModel, messages: ModelMessage[
   // three-word "Akki eshtu ide" went to the khata desk.
   const previous = [...messages.slice(0, -1)].reverse().find((message) => message.role === "assistant" && textOf(message));
   const answering = previous && textOf(previous).trim().endsWith("?") && ownerText.split(/\s+/).filter(Boolean).length <= 4;
+  if (answering) {
+    const desk = deskThatAsked(messages);
+    if (desk) return { desk, by: "answer", ms: 0, tokens: 0 };
+  }
   const prompt = [
     answering ? `Munshi asked: ${textOf(previous).slice(0, 300)}` : null,
     `Owner: ${ownerText.slice(0, 500)}`,

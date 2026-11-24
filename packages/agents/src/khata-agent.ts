@@ -165,8 +165,8 @@ export function createKhataAgent({ model, store, shopName, language, approvalSec
     mentions ??= (async () => {
       const text = latestOwnerText(messages);
       if (!text) return [];
-      const [customers, products] = await Promise.all([store.listCustomers(), store.listProducts()]);
-      return findMentions(text, customers, products);
+      const [customers, products, suppliers] = await Promise.all([store.listCustomers(), store.listProducts(), store.listSuppliers().catch(() => [])]);
+      return findMentions(text, customers, products, suppliers);
     })().catch(() => []);
     return mentions;
   };
