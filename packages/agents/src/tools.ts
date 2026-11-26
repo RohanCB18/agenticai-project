@@ -15,6 +15,7 @@ import {
 } from "./charts";
 import { amountInWords, lastOwnerText } from "./amounts";
 import { paymentHabits } from "./habits";
+import { restockItems } from "./restock";
 import { coversHsn, type GstPassage, gstCitation, type KnowledgeBase, officialHsn, officialRates, sameGoods } from "./knowledge";
 import { ownerWasAskedAboutRepeat } from "./threads";
 import { rankByName } from "./match";
@@ -835,9 +836,7 @@ export function createKhataTools(store: KhataStore, shopName = "your shop", opti
           });
         } else {
           // Top up what's low to twice its reorder level, so it isn't low again next week.
-          wanted = products
-            .filter((p) => p.reorderLevel !== null && p.stockQty <= p.reorderLevel)
-            .map((p) => ({ name: p.name, quantity: Math.max(p.reorderLevel! * 2 - p.stockQty, 1), unit: p.unit }));
+          wanted = restockItems(products);
           if (wanted.length === 0) return { status: "nothing_low", hint: "Nothing is below its reorder level. Ask the owner what to order." };
         }
         try {

@@ -2,6 +2,7 @@ import { type Desk, type KhataUIMessage, MissingModelKeyError } from "@munshi/ag
 import { createAgentUIStreamResponse, createIdGenerator } from "ai";
 import { after } from "next/server";
 import { ApprovalSecretMissingError, buildKhataAgent } from "@/lib/agent";
+import { alertLowStock } from "@/lib/restock";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 import { flushTraces, traced } from "@/lib/telemetry";
@@ -39,8 +40,13 @@ export async function POST(request: Request) {
     throw error;
   }
 
-  // after() runs once the stream has finished, so the trace is complete before it is sent.
-  after(flushTraces);
+  // after() runs once the stream has finished, so the trace is complete before it is sent. Then,
+  // as after a Telegram turn, anything the chat took to its alert level gets a restock ask (on the
+  // owner's chat app, where the Haan button lives).
+  after(async () => {
+    await flushTraces();
+    await alertLowStock(createAdminClient(), merchant.id);
+  });
   const streamAgent = agent;
   return traced({ merchantId: merchant.id, channel: "chat", source: source === "voice" ? "voice" : undefined }, () =>
     createAgentUIStreamResponse({

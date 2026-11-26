@@ -28,6 +28,7 @@ import { buildKhataAgent } from "@/lib/agent";
 import { BILL_APPROVAL_PREFIX, decideBill, handleBillPhoto } from "@/lib/bills";
 import { answerReminders, startReminders } from "@/lib/reminder-runs";
 import { paymentNote, whatsappButton } from "@/lib/reminders";
+import { alertLowStock, decideRestock, RESTOCK_APPROVAL_PREFIX } from "@/lib/restock";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { reconcilePayouts } from "@/lib/supplier-payouts";
 import { traced } from "@/lib/telemetry";
@@ -94,6 +95,16 @@ export async function handleInbound(inbound: Inbound, sender: ChannelSender) {
     await inbound.acknowledge?.(answered ? (inbound.approved ? "approved" : "denied") : "stale");
     if (!answered) return sender.sendText(chatId, "That reminder list was already answered or has expired. Send /reminders for a fresh one.");
     if (inbound.approved) await sender.showWorking?.(chatId, "typing");
+    return;
+  }
+  // A restock ask Munshi sent when stock ran low: "haan" orders that exact quote and sends the
+  // page to pay the supplier, in code, with no model in between.
+  if (inbound.kind === "decision" && inbound.approvalId.startsWith(RESTOCK_APPROVAL_PREFIX)) {
+    await inbound.acknowledge?.(inbound.approved ? "approved" : "denied");
+    if (inbound.approved) await sender.showWorking?.(chatId, "typing");
+    const answer = await decideRestock(admin, merchant.id, inbound.approvalId, inbound.approved);
+    await sender.sendText(chatId, answer.text, answer.buttons);
+    if (answer.askAgain) await alertLowStock(admin, merchant.id);
     return;
   }
 
@@ -245,6 +256,10 @@ export async function handleInbound(inbound: Inbound, sender: ChannelSender) {
           : undefined;
     await sender.sendApproval(chatId, approvalPrompt(approval, messages), approval.approvalId, labels);
   }
+
+  // A sale or stock update may have taken something to its alert level: ask about restocking now,
+  // after the reply. Skipped while an approval is waiting, so the owner answers one thing at a time.
+  if (pendingApprovals(messages).length === 0) await alertLowStock(admin, merchant.id);
 }
 
 async function linkAccount(admin: SupabaseClient, inbound: Inbound & { kind: "link" }, sender: ChannelSender) {

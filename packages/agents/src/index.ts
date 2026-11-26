@@ -17,3 +17,4 @@ export * from "./reminders";
 export * from "./supplier";
 export * from "./charts";
 export * from "./browser";
+export * from "./restock";
