@@ -2,10 +2,12 @@ import { after } from "next/server";
 import { type CashfreeEvent, parseCashfreeEvent, verifyWebhookSignature } from "@/lib/cashfree";
 import { notifyOwnerOfPayment, settlePayment } from "@/lib/payments";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { settleSupplierLink } from "@/lib/supplier-payouts";
 
 /**
  * Cashfree webhooks. When a customer pays a link or an in-shop QR, record it so the khata
- * updates itself, then tell the owner on their chat app.
+ * updates itself, then tell the owner on their chat app. When the owner pays a supplier's link
+ * (Easy Split), record the supplier payment the same way.
  */
 export async function POST(request: Request) {
   const secret = process.env.CASHFREE_CLIENT_SECRET;
@@ -25,6 +27,11 @@ export async function POST(request: Request) {
   if (!event) return Response.json({ ignored: true });
 
   const db = createAdminClient();
+  // A link the owner pays to a supplier (Easy Split) is a supplier payment, not a customer's.
+  if (event.kind === "link" && (await settleSupplierLink(db, event.linkId, event.status, event.paidPaise))) {
+    console.info(`[munshi] cashfree webhook: supplier payment ${event.linkId} ${event.status}`);
+    return Response.json({ ok: true });
+  }
   const row =
     event.kind === "link"
       ? (await db.from("payment_links").select("id, merchant_id, customer_id, amount_paid_paise").eq("cashfree_link_id", event.linkId).maybeSingle()).data

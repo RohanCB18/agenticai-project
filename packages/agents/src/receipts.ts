@@ -6,7 +6,7 @@ import type { ModelMessage } from "ai";
 export type Action = { tool: string; output: Record<string, unknown> };
 
 /** Statuses a write tool returns only after the change is saved. */
-const DONE = new Set(["added", "recorded", "updated", "sent", "qr_ready", "payment_received", "remembered", "forgotten", "ordered", "alert_set", "paid", "payout_started", "tagged", "corrected", "removed"]);
+const DONE = new Set(["added", "recorded", "updated", "sent", "qr_ready", "payment_received", "remembered", "forgotten", "ordered", "alert_set", "paid", "payout_started", "pay_link", "tagged", "corrected", "removed"]);
 
 /** True for a tool output that reports a saved change. */
 function isDone(output: unknown): output is Record<string, unknown> {
@@ -79,7 +79,9 @@ export function receiptLines(actions: Action[]): string[] {
         return ((output.tagged ?? []) as Record<string, unknown>[]).map((t) => `🧾 GST tag: ${s(t.product)} · HSN ${s(t.hsn)} · ${s(t.gst)}`);
       case "paySupplier":
         return [
-          output.status === "paid"
+          output.status === "pay_link"
+            ? `💸 Payment page for ${s(output.supplier)} ${s(output.amount)} · pay it and Cashfree sends it to ${s(output.to)}`
+            : output.status === "paid"
             ? `💸 Paid ${s(output.supplier)} ${s(output.amount)} to ${s(output.to)}${output.utr ? ` · UTR ${s(output.utr)}` : ""}`
             : `💸 Paying ${s(output.supplier)} ${s(output.amount)} to ${s(output.to)} · started, Munshi will confirm`,
         ];

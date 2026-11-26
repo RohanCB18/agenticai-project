@@ -165,7 +165,7 @@ export class MemoryStore implements KhataStore {
 
   suppliers: Supplier[] = [];
   payouts: (SupplierPayout & { supplierId: string; supplierOrderId?: string })[] = [];
-  /** What Cashfree reports when a payout starts; tests set "success" or "failed". */
+  /** What a new supplier payment is: a payment page by default; tests set "success" or "failed". */
   payoutStatus: SupplierPayout["status"] = "pending";
   payoutFails = false;
 
@@ -190,7 +190,7 @@ export class MemoryStore implements KhataStore {
   }
 
   async paySupplier({ supplier, amountPaise, supplierOrderId }: Parameters<KhataStore["paySupplier"]>[0]) {
-    if (this.payoutFails) throw new Error("Cashfree Payouts transfer didn't answer within 15 s");
+    if (this.payoutFails) throw new Error("Cashfree create link didn't answer within 15 s");
     const payout = {
       id: this.id("pay"),
       supplierId: supplier.id,
@@ -199,6 +199,7 @@ export class MemoryStore implements KhataStore {
       amountPaise,
       utr: this.payoutStatus === "success" ? "UTR123" : null,
       reason: this.payoutStatus === "failed" ? "Invalid beneficiary account" : null,
+      paymentUrl: this.payoutStatus === "pending" ? `https://payments-test.cashfree.com/links/${supplier.id}` : null,
     };
     this.payouts.push(payout);
     return payout;

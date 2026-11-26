@@ -67,6 +67,8 @@ export type CreateLinkInput = {
   expiresAt: Date;
   notifyUrl?: string;
   notes?: Record<string, string>;
+  /** Easy Split: the part of the payment Cashfree settles to a vendor (a supplier) instead of the shop. */
+  splits?: { vendorId: string; amountPaise: number }[];
 };
 
 export type CashfreeLink = {
@@ -106,9 +108,67 @@ export function createPaymentLink(input: CreateLinkInput): Promise<CashfreeLink>
         ...(input.notifyUrl ? { notify_url: input.notifyUrl } : {}),
       },
       link_notes: input.notes,
+      ...(input.splits?.length ? { order_splits: input.splits.map((s) => ({ vendor_id: s.vendorId, amount: s.amountPaise / 100 })) } : {}),
     }),
   });
 }
+
+// Easy Split vendors: how Munshi pays suppliers. The owner pays a Cashfree payment link split to the
+// supplier, and Cashfree settles that amount to the supplier's UPI ID or bank account. Cashfree
+// Payouts (paying out of a balance kept with Cashfree) did this before, until its test account
+// began rejecting every transfer with ERROR_SELECTING_FUND_SOURCE.
+// Docs: https://www.cashfree.com/docs/api-reference/payments/latest/easy-split/create-vendor
+
+export type PayoutAccount = { vpa: string } | { bankAccount: string; ifsc: string };
+
+export type VendorInput = {
+  vendorId: string;
+  name: string;
+  email: string;
+  phone: string;
+  account: PayoutAccount;
+  /** Cashfree needs a vendor's GSTIN or PAN. */
+  kyc: { gst: string } | { pan: string };
+};
+
+export type Vendor = { vendor_id: string; status: string };
+
+/** A new vendor id for each set of details, so an old id never points somewhere new. Letters and digits only. */
+export const newVendorId = () => `munshi${crypto.randomUUID().replaceAll("-", "")}`;
+
+/**
+ * Registers a supplier as an Easy Split vendor, settled the day after each payment (schedule 1).
+ * Cashfree then checks the account (IN_BANK_VALIDATION, then ACTIVE); a link split to the vendor
+ * can be made straight away.
+ */
+export function createVendor(input: VendorInput): Promise<Vendor> {
+  const holder = cashfreeName(input.name);
+  return request<Vendor>("add vendor", "/easy-split/vendors", {
+    method: "POST",
+    body: JSON.stringify({
+      vendor_id: input.vendorId,
+      status: "ACTIVE",
+      name: holder,
+      email: input.email,
+      phone: tenDigit(input.phone),
+      verify_account: false,
+      dashboard_access: false,
+      schedule_option: 1,
+      ...("vpa" in input.account
+        ? { upi: { vpa: input.account.vpa, account_holder: holder } }
+        : { bank: { account_number: input.account.bankAccount, account_holder: holder, ifsc: input.account.ifsc } }),
+      // A wholesaler supplying shops: Cashfree's "B2B" business type.
+      kyc_details: { account_type: "BUSINESS", business_type: "B2B", ...input.kyc },
+    }),
+  });
+}
+
+export function getVendor(vendorId: string): Promise<Vendor> {
+  return request<Vendor>("get vendor", `/easy-split/vendors/${encodeURIComponent(vendorId)}`);
+}
+
+/** Vendor states that can't be paid. IN_BANK_VALIDATION and ACTIVE can. */
+export const VENDOR_UNUSABLE = ["BLOCKED", "DELETED", "BANK_VALIDATION_FAILED", "INACTIVE"];
 
 export type CreateQrInput = {
   orderId: string;

@@ -951,7 +951,7 @@ export function createKhataTools(store: KhataStore, shopName = "your shop", opti
 
     paySupplier: tool({
       description:
-        "Pay a supplier or wholesaler from the shop's Cashfree balance, to the UPI ID or bank account the owner added and confirmed in Munshi's dashboard. Moves real money, so call it only after supplierDues and the owner's yes; the owner then approves it with a button.",
+        "Pay a supplier or wholesaler through Cashfree: makes a Cashfree payment page for the amount, which the owner pays, and Cashfree sends that money on to the UPI ID or bank account the owner added and confirmed in Munshi's dashboard. Moves real money, so call it only after supplierDues and the owner's yes; the owner then approves it with a button.",
       inputSchema: z.object({ supplierName: z.string(), amount: Rupees }),
       execute: async ({ supplierName, amount }) => {
         const r = await resolveSupplier(store, supplierName);
@@ -978,6 +978,14 @@ export function createKhataTools(store: KhataStore, shopName = "your shop", opti
         if (payout.status === "success") return { status: "paid", ...base, utr: payout.utr };
         if (payout.status === "failed") {
           return { status: "payout_failed", ...base, reason: payout.reason, hint: "Tell the owner the payment failed and nothing left their account." };
+        }
+        if (payout.paymentUrl) {
+          return {
+            status: "pay_link",
+            ...base,
+            url: payout.paymentUrl,
+            hint: `A Cashfree payment page for ${base.amount} to ${r.supplier.name} is ready, and Munshi sends it to the owner with this reply. Tell the owner to open it and pay; Cashfree sends the money on to ${r.supplier.name}, and Munshi confirms once it is paid. Nothing is paid until they pay on that page: never say it is paid.`,
+          };
         }
         return {
           status: "payout_started",

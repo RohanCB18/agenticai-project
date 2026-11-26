@@ -3,10 +3,9 @@ import { connection } from "next/server";
 import { Suspense } from "react";
 import { formatINR } from "@munshi/db";
 import { getCurrentMerchant } from "@/lib/auth";
-import { maskedAccount, payoutsConfigured } from "@/lib/cashfree-payouts";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
-import { reconcilePayouts } from "@/lib/supplier-payouts";
+import { maskedAccount, reconcilePayouts } from "@/lib/supplier-payouts";
 import { stopPayouts } from "./actions";
 import { PayoutAccountForm } from "./payout-account-form";
 
@@ -20,13 +19,13 @@ export default function SuppliersPage() {
   );
 }
 
-const STATUS_LABEL: Record<string, string> = { pending: "On its way", success: "Paid", failed: "Failed", reversed: "Sent back" };
+const STATUS_LABEL: Record<string, string> = { pending: "Waiting for you to pay", success: "Paid", failed: "Not paid", reversed: "Returned" };
 
 async function Suppliers() {
   await connection();
   const merchant = await getCurrentMerchant();
-  // Payments still on their way: ask Cashfree first, so the list below is what really happened.
-  if (payoutsConfigured()) {
+  // Payment pages still waiting: ask Cashfree first, so the list below is what really happened.
+  if (process.env.CASHFREE_CLIENT_ID) {
     await reconcilePayouts(createAdminClient(), merchant.id).catch((error: unknown) =>
       console.error("[munshi] payout check failed:", error instanceof Error ? error.message : error),
     );
@@ -34,7 +33,11 @@ async function Suppliers() {
   const supabase = await createClient();
   const [{ data: suppliers }, { data: payouts }] = await Promise.all([
     supabase.from("suppliers").select("id, name, payout_vpa, payout_account_last4, payout_ifsc, beneficiary_status, beneficiary_verified, cashfree_beneficiary_id").order("name"),
-    supabase.from("supplier_payouts").select("id, amount_paise, status, status_description, utr, created_at, suppliers(name)").order("created_at", { ascending: false }).limit(10),
+    supabase
+      .from("supplier_payouts")
+      .select("id, amount_paise, status, status_description, utr, payment_url, created_at, suppliers(name)")
+      .order("created_at", { ascending: false })
+      .limit(10),
   ]);
 
   return (
@@ -60,7 +63,9 @@ async function Suppliers() {
                   <div>
                     <p className="font-medium">{s.name}</p>
                     <p className="text-sm text-muted">
-                      {account ? `${account}${s.payout_ifsc ? ` · ${s.payout_ifsc}` : ""} · Cashfree: ${String(s.beneficiary_status ?? "not checked").toLowerCase()}` : "No payout account"}
+                      {account
+                        ? `${account}${s.payout_ifsc ? ` · ${s.payout_ifsc}` : ""} · Cashfree: ${String(s.beneficiary_status ?? "not checked").toLowerCase().replaceAll("_", " ")}`
+                        : "No payout account"}
                     </p>
                   </div>
                   {s.beneficiary_verified ? (
@@ -101,6 +106,11 @@ async function Suppliers() {
                   <div className="text-right">
                     <p className="font-mono tabular-nums">{formatINR(Number(p.amount_paise))}</p>
                     <p className={`text-sm ${p.status === "failed" || p.status === "reversed" ? "text-danger" : "text-muted"}`}>{STATUS_LABEL[p.status] ?? p.status}</p>
+                    {p.status === "pending" && p.payment_url && (
+                      <a href={p.payment_url} target="_blank" rel="noreferrer" className="text-sm text-accent underline-offset-4 hover:underline">
+                        Pay now
+                      </a>
+                    )}
                   </div>
                 </li>
               );

@@ -2,12 +2,12 @@ import "server-only";
 import type { Balance, Customer, KhataStore, LedgerEntry, PaymentLink, Product, Supplier, SupplierPayout } from "@munshi/agents";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { cashfreeSendsSms, createPaymentLink as createCashfreeLink, createUpiQr } from "@/lib/cashfree";
-import { createTransfer, getTransfer, maskedAccount, payoutStatus, type Transfer, transferEvent } from "@/lib/cashfree-payouts";
 import { cancelOpenRequests, reconcilePayments } from "@/lib/payments";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { settlePayout } from "@/lib/supplier-payouts";
+import { maskedAccount, settlePayout } from "@/lib/supplier-payouts";
 
 const LINK_TTL_MS = 3 * 24 * 60 * 60 * 1000; // udhaar links stay valid for 3 days
+const SUPPLIER_LINK_TTL_MS = 24 * 60 * 60 * 1000; // a supplier payment page is for paying now, so a day
 const QR_TTL_MS = 20 * 60 * 1000; // a counter QR only needs to last while the customer is there
 
 function must<T>(result: { data: T | null; error: { message: string } | null }, what: string): T {
@@ -443,9 +443,10 @@ export function createSupabaseKhataStore(db: SupabaseClient, merchantId: string,
         "Approve",
       );
 
-      // Saved before Cashfree is asked, so a webhook that races the answer finds it.
+      // Easy Split: a Cashfree payment page the owner pays, all of it settled to the supplier's
+      // vendor account. Saved before Cashfree is asked, so a webhook that races the answer finds it.
       const admin = createAdminClient();
-      const transferId = `munshi_${crypto.randomUUID().replaceAll("-", "")}`; // 39 characters; Cashfree allows 40
+      const linkId = `munshi_${crypto.randomUUID().replaceAll("-", "")}`.slice(0, 50);
       const mode = row.payout_vpa ? ("upi" as const) : ("banktransfer" as const);
       const payout = must(
         await admin
@@ -455,7 +456,8 @@ export function createSupabaseKhataStore(db: SupabaseClient, merchantId: string,
             supplier_id: row.id,
             supplier_order_id: supplierOrderId ?? null,
             approval_id: approval.id,
-            transfer_id: transferId,
+            transfer_id: linkId,
+            provider: "easy_split",
             amount_paise: amountPaise,
             mode,
           })
@@ -464,37 +466,33 @@ export function createSupabaseKhataStore(db: SupabaseClient, merchantId: string,
         "Save payout",
       ) as { id: string };
 
-      let transfer: Transfer;
+      // The owner pays, so the page carries their name and number (Cashfree needs a phone).
+      const { data: owner } = await admin.from("merchants").select("owner_name, shop_name, phone").eq("id", merchantId).single();
+      const order = supplierOrderId ? (await db.from("supplier_orders").select("order_ref").eq("id", supplierOrderId).maybeSingle()).data : null;
+      const appUrl = process.env.PUBLIC_APP_URL;
+      let link;
       try {
-        transfer = await createTransfer({ transferId, amountPaise, beneficiaryId: row.cashfree_beneficiary_id, mode, remarks: "Payment from Munshi" });
+        link = await createCashfreeLink({
+          linkId,
+          amountPaise,
+          purpose: `Payment to ${row.name}${order?.order_ref ? ` for order ${order.order_ref}` : ""}, through Munshi`,
+          customer: { name: owner?.owner_name || owner?.shop_name || "Shop owner", phone: owner?.phone || "9999999999" },
+          expiresAt: new Date(Date.now() + SUPPLIER_LINK_TTL_MS),
+          notifyUrl: appUrl?.startsWith("https://") ? `${appUrl}/api/webhooks/cashfree` : undefined,
+          notes: { merchant_id: merchantId, supplier_id: row.id, purpose: "supplier_payment" },
+          splits: [{ vendorId: row.cashfree_beneficiary_id, amountPaise }],
+        });
       } catch (error) {
-        // Cashfree's advice: after an error, ask before calling it failed, in case it went through.
-        let known: Transfer | "not_found" | "unknown";
-        try {
-          known = await getTransfer(transferId);
-        } catch (lookup) {
-          known = lookup instanceof Error && /\(404\)/.test(lookup.message) ? "not_found" : "unknown";
-        }
-        if (known === "not_found") {
-          await settlePayout(admin, { transferId, status: "failed", statusCode: null, description: "Not accepted by Cashfree", utr: null, cfTransferId: null });
-          await admin.from("approvals").update({ status: "failed" }).eq("id", approval.id);
-          throw error;
-        }
-        if (known === "unknown") {
-          // Cashfree couldn't say either way: leave it open for the webhook, or Munshi's own status
-          // checks (reconcilePayouts), to settle.
-          console.error(`[munshi] payout ${transferId}: Cashfree didn't confirm it either way:`, error instanceof Error ? error.message : error);
-          await admin.from("approvals").update({ status: "executed" }).eq("id", approval.id);
-          return { id: payout.id, status: "pending", amountPaise, utr: null, reason: "Cashfree hasn't confirmed it yet" };
-        }
-        transfer = known;
+        console.error(`[munshi] supplier payment ${linkId}: Cashfree didn't make the page:`, error instanceof Error ? error.message : error);
+        await settlePayout(admin, { transferId: linkId, status: "failed", statusCode: null, description: "Cashfree didn't make the payment page", utr: null, cfTransferId: null });
+        await admin.from("approvals").update({ status: "failed" }).eq("id", approval.id);
+        throw error;
       }
 
-      const status = payoutStatus(transfer.status);
-      console.info(`[munshi] payout ${transferId}: Cashfree says ${transfer.status} (${transfer.status_code ?? "-"})`);
-      const settled = await settlePayout(admin, { ...transferEvent(transfer), transferId });
-      await admin.from("approvals").update({ status: status === "failed" ? "failed" : "executed" }).eq("id", approval.id);
-      return { id: payout.id, status: settled?.status ?? status, amountPaise, utr: transfer.transfer_utr || null, reason: transfer.status_description ?? null };
+      console.info(`[munshi] supplier payment ${linkId}: page made, split to vendor ${row.cashfree_beneficiary_id}`);
+      await admin.from("supplier_payouts").update({ payment_url: link.link_url, cf_transfer_id: String(link.cf_link_id) }).eq("id", payout.id);
+      await admin.from("approvals").update({ status: "executed" }).eq("id", approval.id);
+      return { id: payout.id, status: "pending", amountPaise, utr: null, reason: null, paymentUrl: link.link_url };
     },
   };
   return store;

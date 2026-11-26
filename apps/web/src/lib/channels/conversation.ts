@@ -29,7 +29,7 @@ import { BILL_APPROVAL_PREFIX, decideBill, handleBillPhoto } from "@/lib/bills";
 import { answerReminders, startReminders } from "@/lib/reminder-runs";
 import { paymentNote, whatsappButton } from "@/lib/reminders";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { reconcilePayouts, watchPayouts } from "@/lib/supplier-payouts";
+import { reconcilePayouts } from "@/lib/supplier-payouts";
 import { traced } from "@/lib/telemetry";
 import { ON_DEMAND_KEY, REMINDER_APPROVAL_PREFIX } from "@/workflows/reminder-hook";
 import type { ChannelSender, Inbound, LinkButton, MessagingChannel } from "./types";
@@ -44,9 +44,6 @@ const HELP =
 
 /** Time for thinking in one turn: the webhook function is stopped at 60 s (maxDuration). */
 const TURN_BUDGET_MS = 45_000;
-const FUNCTION_LIMIT_MS = 55_000; // what's safe to use of the 60 s
-/** How long to watch a payout that just started (Cashfree settles UPI, or refuses, in seconds). */
-const PAYOUT_WATCH_MS = 40_000;
 const FAILED_TURN = "⚠️ Sorry, I couldn't finish that just now. Please send it again in a minute.";
 // Asking again is safe: a new payment link cancels the customer's open one, and the same
 // wholesaler quote always gives the same order.
@@ -100,7 +97,7 @@ export async function handleInbound(inbound: Inbound, sender: ChannelSender) {
     return;
   }
 
-  // Supplier payments still on their way: ask Cashfree, in case its webhook never came. The owner
+  // Supplier payment pages still waiting: ask Cashfree, in case its webhook never came. The owner
   // hears how one ended before the answer to whatever they asked.
   await reconcilePayouts(admin, merchant.id).catch((error: unknown) => console.error("[munshi] payout check failed:", error instanceof Error ? error.message : error));
 
@@ -210,6 +207,13 @@ export async function handleInbound(inbound: Inbound, sender: ChannelSender) {
     const phone = await customerPhone(admin, merchant.id, out.customer);
     buttons.push(whatsappButton(out.customer ?? "customer", phone, paymentNote(out.customer ?? "", merchant.shop_name, out.amount ?? "", out.url)));
   }
+  // A supplier payment page (Easy Split): the owner pays it themselves, so it opens straight away.
+  for (const output of toolOutputs(responseMessages, "paySupplier")) {
+    const out = output as { status?: string; url?: string; supplier?: string; amount?: string };
+    if (out.status !== "pay_link" || !out.url) continue;
+    if (!reply.includes(out.url)) reply += `\n\nPay here: ${out.url}`;
+    buttons.push({ text: `Pay ${out.amount ?? ""} to ${out.supplier ?? "the supplier"}`.replace(/\s+/g, " "), url: out.url });
+  }
 
   // In-shop QRs go out as an image, before the reply, so the customer can scan straight away.
   for (const output of toolOutputs(responseMessages, "showPaymentQr")) {
@@ -240,13 +244,6 @@ export async function handleInbound(inbound: Inbound, sender: ChannelSender) {
           ? { yes: "✅ Haan, pay karo", no: "❌ Nahi" }
           : undefined;
     await sender.sendApproval(chatId, approvalPrompt(approval, messages), approval.approvalId, labels);
-  }
-
-  // A supplier payment started this turn: watch it for the rest of the turn's time, so the owner
-  // hears within seconds whether it landed or failed, webhook or not.
-  if (toolOutputs(responseMessages, "paySupplier").some((output) => (output as { status?: string }).status === "payout_started")) {
-    const forMs = Math.min(PAYOUT_WATCH_MS, FUNCTION_LIMIT_MS - (Date.now() - startedAt));
-    await watchPayouts(admin, merchant.id, { forMs }).catch((error: unknown) => console.error("[munshi] payout watch failed:", error instanceof Error ? error.message : error));
   }
 }
 
@@ -334,7 +331,7 @@ function approvalPrompt(approval: PendingApproval, messages: ModelMessage[]) {
     // Where the money goes, from the supplierDues lookup (the owner's saved account), never from the model's words.
     const dues = toolOutputs(messages, "supplierDues").at(-1) as { supplier?: string; payTo?: string } | undefined;
     const to = dues?.payTo && dues.supplier?.toLowerCase() === supplierName?.toLowerCase() ? ` to ${dues.payTo}` : "";
-    return `🔐 Needs your OK\n\nPay ${supplierName ?? "the supplier"} ${amount ? formatINR(rupeesToPaise(amount)) : ""}${to} from your Cashfree balance?`;
+    return `🔐 Needs your OK\n\nPay ${supplierName ?? "the supplier"} ${amount ? formatINR(rupeesToPaise(amount)) : ""}${to}? Munshi makes a Cashfree payment page for you to pay, and Cashfree sends the money on.`;
   }
   if (approval.toolName === "sendPaymentLink") {
     const { customerName, amount } = (approval.input ?? {}) as { customerName?: string; amount?: number };

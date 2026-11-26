@@ -81,7 +81,8 @@ export function ToolPart({ part, onDecision }: { part: Part; onDecision: Decide 
       <div className="flex max-w-sm flex-col gap-3 rounded-lg border-2 border-accent bg-surface p-4">
         <p className="text-sm uppercase tracking-wider text-accent">Needs your OK</p>
         <p>
-          Pay <strong>{input.supplierName}</strong> <strong>₹{input.amount?.toLocaleString("en-IN")}</strong> from your Cashfree balance?
+          Pay <strong>{input.supplierName}</strong> <strong>₹{input.amount?.toLocaleString("en-IN")}</strong>? Munshi makes a Cashfree payment page for you to pay,
+          and Cashfree sends the money on.
         </p>
         <div className="flex gap-2">
           <button onClick={() => onDecision({ id: part.approval.id, approved: true })} className="rounded-md bg-accent px-4 py-2 font-medium text-on-accent">
@@ -135,7 +136,9 @@ export function ToolPart({ part, onDecision }: { part: Part; onDecision: Decide 
   // A saved change appears as its receipt under the reply, worded as on Telegram.
   // Except tagging in bulk that left choices for the owner: those still need showing.
   const choices = name === "tagAllProducts" && Array.isArray((part.output as { chooseRate?: unknown[] }).chooseRate) && (part.output as { chooseRate: unknown[] }).chooseRate.length > 0;
-  if (receiptLines(completedActionsInParts([part])).length > 0 && !choices) return null;
+  // And a supplier's payment page: the owner still has to open it and pay.
+  const payPage = name === "paySupplier" && (part.output as { status?: string }).status === "pay_link";
+  if (receiptLines(completedActionsInParts([part])).length > 0 && !choices && !payPage) return null;
 
   const body = output(name, part.output as Record<string, unknown>);
   if (body == null) return null;
@@ -336,6 +339,19 @@ function output(name: string, out: Record<string, unknown>): ReactNode {
         ))}
         <p className="mt-1 border-t border-line pt-1 font-medium">Due {String(out.totalDue)}</p>
         <p className="text-muted">Pays to {String(out.payTo)}</p>
+      </div>
+    );
+  }
+
+  if (name === "paySupplier" && out.status === "pay_link") {
+    return (
+      <div className="flex flex-col gap-2">
+        <p>
+          {String(out.amount)} to {String(out.supplier)}. Cashfree sends it on to {String(out.to)}.
+        </p>
+        <a href={String(out.url)} target="_blank" rel="noreferrer" className="self-start rounded-md bg-accent px-4 py-2 font-medium text-on-accent">
+          Pay {String(out.amount)}
+        </a>
       </div>
     );
   }

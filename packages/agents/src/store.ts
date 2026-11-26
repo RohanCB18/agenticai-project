@@ -52,7 +52,8 @@ export type Memory = { id: string; fact: string; customerId: string | null; crea
 export type Supplier = { id: string; name: string; aliases: string[]; account: string | null; verified: boolean };
 /** A wholesaler order not yet paid (nor being paid). */
 export type SupplierOrderDue = { id: string; orderRef: string; totalPaise: Paise; createdAt: string };
-export type SupplierPayout = { id: string; status: "pending" | "success" | "failed" | "reversed"; amountPaise: Paise; utr: string | null; reason: string | null };
+/** A supplier payment. With Cashfree Easy Split it starts as a payment page (paymentUrl) the owner pays. */
+export type SupplierPayout = { id: string; status: "pending" | "success" | "failed" | "reversed"; amountPaise: Paise; utr: string | null; reason: string | null; paymentUrl?: string | null };
 
 export interface KhataStore {
   listCustomers(): Promise<Customer[]>;
@@ -88,7 +89,10 @@ export interface KhataStore {
   listSuppliers(): Promise<Supplier[]>;
   /** Orders to a supplier, by name as the wholesaler gave it, that nothing has paid yet. Newest first. */
   unpaidSupplierOrders(supplierName: string): Promise<SupplierOrderDue[]>;
-  /** Pays a verified supplier through Cashfree Payouts. Only called after the owner approved. */
+  /**
+   * Starts paying a verified supplier through Cashfree Easy Split: a payment page the owner pays,
+   * settled to the supplier's account. Only called after the owner approved.
+   */
   paySupplier(input: { supplier: Supplier; amountPaise: Paise; supplierOrderId?: string }): Promise<SupplierPayout>;
   /** Keeps a chart Munshi drew, so the chat can show it. */
   saveChart(input: { title: string; png: Uint8Array }): Promise<{ id: string }>;

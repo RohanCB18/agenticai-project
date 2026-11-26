@@ -516,9 +516,20 @@ describe("paying suppliers", () => {
     });
   });
 
-  it("pays a verified supplier and stops showing the paid order as due", async () => {
+  it("makes a Cashfree payment page for a verified supplier, and stops showing the order as due", async () => {
     const out = await tools.paySupplier.execute!({ supplierName: "Sharma", amount: 4200 }, ctx);
-    expect(out).toMatchObject({ status: "payout_started", supplier: "Sharma Traders", amount: "₹4,200", to: "UPI su•••@upi", forOrder: "ST-1" });
+    expect(out).toMatchObject({
+      status: "pay_link",
+      supplier: "Sharma Traders",
+      amount: "₹4,200",
+      to: "UPI su•••@upi",
+      forOrder: "ST-1",
+      url: "https://payments-test.cashfree.com/links/sup_1",
+      hint: expect.stringContaining("never say it is paid"),
+    });
+    expect(receiptLines([{ tool: "paySupplier", output: out as Record<string, unknown> }])).toEqual([
+      "💸 Payment page for Sharma Traders ₹4,200 · pay it and Cashfree sends it to UPI su•••@upi",
+    ]);
     expect(store.payouts).toEqual([expect.objectContaining({ supplierId: "sup_1", amountPaise: 420000, supplierOrderId: "ST-1" })]);
     expect(await tools.supplierDues.execute!({ supplierName: "Sharma Traders" }, ctx)).toMatchObject({ totalDue: "₹1,500" });
   });

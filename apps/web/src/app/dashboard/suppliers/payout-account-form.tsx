@@ -13,16 +13,29 @@ export function PayoutAccountForm() {
     <form action={action} className="flex flex-col gap-4 rounded-lg border border-line bg-surface p-5">
       <div>
         <p className="font-medium">Add a supplier Munshi can pay</p>
-        <p className="text-sm text-muted">Munshi pays only accounts added here, and asks for your OK every time.</p>
+        <p className="text-sm text-muted">
+          Munshi pays only accounts added here, and asks for your OK every time. You pay a Cashfree payment page, and Cashfree sends the money on to
+          this account.
+        </p>
       </div>
 
       <label className="flex flex-col gap-1.5 text-sm">
         Supplier name, as on their orders
         <input name="name" required className={field} placeholder="Sharma Traders" />
       </label>
+      <div className="grid gap-4 sm:grid-cols-2">
+        <label className="flex flex-col gap-1.5 text-sm">
+          Supplier&apos;s phone
+          <input name="phone" required inputMode="tel" className={field} placeholder="98XXXXXXXX" />
+        </label>
+        <label className="flex flex-col gap-1.5 text-sm">
+          Supplier&apos;s GSTIN or PAN
+          <input name="taxId" required className={`${field} uppercase`} placeholder="On their bill, like 29ABCDE1234F1Z5" autoComplete="off" />
+        </label>
+      </div>
       <label className="flex flex-col gap-1.5 text-sm">
-        Phone (optional)
-        <input name="phone" inputMode="tel" className={field} placeholder="98XXXXXXXX" />
+        Supplier&apos;s email (optional: Cashfree&apos;s settlement emails go to yours if left out)
+        <input name="email" type="email" className={field} placeholder="accounts@sharmatraders.in" autoComplete="off" />
       </label>
 
       <fieldset className="flex gap-4 text-sm">
@@ -66,7 +79,7 @@ export function PayoutAccountForm() {
       {state.saved && <p className="text-sm text-accent">{state.saved}</p>}
 
       <button type="submit" disabled={pending} className="self-start rounded-md bg-accent px-4 py-2.5 font-medium text-on-accent disabled:opacity-60">
-        {pending ? "Checking with Cashfree…" : "Save account"}
+        {pending ? "Adding to Cashfree…" : "Save account"}
       </button>
     </form>
   );

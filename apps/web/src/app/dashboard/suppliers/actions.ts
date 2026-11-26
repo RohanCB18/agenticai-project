@@ -1,30 +1,38 @@
 "use server";
 
-import { randomUUID } from "node:crypto";
 import { revalidatePath } from "next/cache";
 import { getCurrentMerchant } from "@/lib/auth";
-import { createBeneficiary, type PayoutAccount, payoutsConfigured } from "@/lib/cashfree-payouts";
+import { createVendor, newVendorId, type PayoutAccount, VENDOR_UNUSABLE } from "@/lib/cashfree";
 import { createClient } from "@/lib/supabase/server";
 
 // Where supplier money goes is set here, by the signed-in owner, and nowhere else: the agent can
-// pay a verified account after the owner's OK, but has no way to add or change one.
+// pay a verified account after the owner's OK, but has no way to add or change one. Each account
+// becomes a Cashfree Easy Split vendor, which Cashfree settles supplier payments to.
 
 export type PayoutAccountState = { error?: string; saved?: string };
 
 const VPA = /^[a-zA-Z0-9._-]{2,256}@[a-zA-Z]{2,64}$/;
 const IFSC = /^[A-Z]{4}0[A-Z0-9]{6}$/;
 const PHONE = /^(\+?91)?[6-9]\d{9}$/;
-/** Cashfree's own check of an account. Anything else (VERIFIED, INITIATED...) can be paid. */
-const UNUSABLE = ["INVALID", "FAILED", "CANCELLED", "DELETED"];
+const GSTIN = /^[0-9]{2}[A-Z0-9]{10}[0-9A-Z]Z[0-9A-Z]$/;
+const PAN = /^[A-Z]{5}[0-9]{4}[A-Z]$/;
+const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 export async function addPayoutAccount(_prev: PayoutAccountState, form: FormData): Promise<PayoutAccountState> {
   const merchant = await getCurrentMerchant();
-  if (!payoutsConfigured()) return { error: "Supplier payments aren't switched on yet: the Cashfree Payouts keys are missing." };
+  if (!process.env.CASHFREE_CLIENT_ID || !process.env.CASHFREE_CLIENT_SECRET) {
+    return { error: "Supplier payments aren't switched on yet: the Cashfree keys are missing." };
+  }
 
   const name = String(form.get("name") ?? "").trim();
   const phone = String(form.get("phone") ?? "").replace(/\s/g, "");
   if (name.length < 2 || name.length > 100) return { error: "Write the supplier's name as it appears on their orders, like Sharma Traders." };
-  if (phone && !PHONE.test(phone)) return { error: "That phone number doesn't look like an Indian mobile number." };
+  if (!PHONE.test(phone)) return { error: "Cashfree needs the supplier's mobile number: 10 digits, like 98XXXXXXXX." };
+  const taxId = String(form.get("taxId") ?? "").replace(/\s/g, "").toUpperCase();
+  const kyc = GSTIN.test(taxId) ? { gst: taxId } : PAN.test(taxId) ? { pan: taxId } : null;
+  if (!kyc) return { error: "Cashfree needs the supplier's GSTIN (15 characters, on their bill) or PAN (like ABCDE1234F)." };
+  const supplierEmail = String(form.get("email") ?? "").trim();
+  if (supplierEmail && !EMAIL.test(supplierEmail)) return { error: "That email doesn't look right." };
 
   let account: PayoutAccount;
   if (form.get("method") === "bank") {
@@ -41,6 +49,11 @@ export async function addPayoutAccount(_prev: PayoutAccountState, form: FormData
   if (form.get("confirmed") !== "on") return { error: "Confirm these details with the supplier first, by phone or in person." };
 
   const db = await createClient();
+  // Cashfree needs an email for a vendor; without the supplier's, its settlement emails go to the owner.
+  const { data: claims } = await db.auth.getClaims();
+  const email = supplierEmail || String(claims?.claims?.email ?? "");
+  if (!email) return { error: "Add the supplier's email: Cashfree needs one." };
+
   // One supplier per name in a shop: the name wholesalers put on their orders, ignoring case.
   const { data: existing } = await db
     .from("suppliers")
@@ -51,29 +64,30 @@ export async function addPayoutAccount(_prev: PayoutAccountState, form: FormData
     .maybeSingle();
   let supplierId = existing?.id as string | undefined;
   if (!supplierId) {
-    const { data: created, error } = await db.from("suppliers").insert({ merchant_id: merchant.id, name, phone: phone || null }).select("id").single();
+    const { data: created, error } = await db.from("suppliers").insert({ merchant_id: merchant.id, name, phone }).select("id").single();
     if (error || !created) return { error: `Couldn't save the supplier: ${error?.message ?? "unknown error"}` };
     supplierId = created.id as string;
   }
 
-  // A new Cashfree beneficiary for every change of details: an old id never points somewhere new.
-  const beneficiaryId = `munshi_${randomUUID().replaceAll("-", "")}`;
+  // A new vendor for every change of details: an old id never points somewhere new.
+  const vendorId = newVendorId();
   let status: string;
   try {
-    status = (await createBeneficiary({ beneficiaryId, name, account, phone })).beneficiary_status ?? "INITIATED";
+    status = (await createVendor({ vendorId, name, email, phone, account, kyc })).status ?? "IN_BANK_VALIDATION";
   } catch (error) {
-    return { error: `Cashfree didn't accept this account. ${error instanceof Error ? error.message.slice(0, 200) : ""}` };
+    const why = error instanceof Error ? error.message.replace(/^Cashfree add vendor failed \(\d+\): /, "").slice(0, 200) : "";
+    return { error: `Cashfree didn't accept this account. ${why}` };
   }
-  const usable = !UNUSABLE.includes(status);
+  const usable = !VENDOR_UNUSABLE.includes(status);
 
   const { error } = await db
     .from("suppliers")
     .update({
-      phone: phone || null,
+      phone,
       payout_vpa: "vpa" in account ? account.vpa : null,
       payout_account_last4: "bankAccount" in account ? account.bankAccount.slice(-4) : null,
       payout_ifsc: "ifsc" in account ? account.ifsc : null,
-      cashfree_beneficiary_id: beneficiaryId,
+      cashfree_beneficiary_id: vendorId,
       beneficiary_status: status,
       beneficiary_verified: usable,
     })
@@ -84,13 +98,13 @@ export async function addPayoutAccount(_prev: PayoutAccountState, form: FormData
     merchant_id: merchant.id,
     actor: "owner",
     action: "supplier_payout_account_added",
-    details: { supplierId, method: "vpa" in account ? "upi" : "bank", cashfreeStatus: status },
+    details: { supplierId, method: "vpa" in account ? "upi" : "bank", cashfreeVendorStatus: status },
   });
 
   revalidatePath("/dashboard/suppliers");
   return usable
     ? { saved: `${name} can now be paid through Munshi, after your OK each time.` }
-    : { error: `Cashfree says this account is ${status.toLowerCase()}. Check the details with ${name}.` };
+    : { error: `Cashfree says this account is ${status.toLowerCase().replaceAll("_", " ")}. Check the details with ${name}.` };
 }
 
 /** Stops Munshi paying a supplier until the owner adds an account again. */
