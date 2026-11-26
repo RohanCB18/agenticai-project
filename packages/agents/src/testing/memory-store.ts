@@ -168,6 +168,10 @@ export class MemoryStore implements KhataStore {
   /** What a new supplier payment is: a payment page by default; tests set "success" or "failed". */
   payoutStatus: SupplierPayout["status"] = "pending";
   payoutFails = false;
+  /** How a pending payment goes: from the balance (on its way) or a page to pay, the fallback. */
+  payoutVia: "balance" | "page" = "page";
+  /** Why the balance didn't pay, when a page is the fallback. */
+  balanceFailed: string | null = null;
 
   async listSuppliers() {
     return this.suppliers;
@@ -198,8 +202,9 @@ export class MemoryStore implements KhataStore {
       status: this.payoutStatus,
       amountPaise,
       utr: this.payoutStatus === "success" ? "UTR123" : null,
-      reason: this.payoutStatus === "failed" ? "Invalid beneficiary account" : null,
-      paymentUrl: this.payoutStatus === "pending" ? `https://payments-test.cashfree.com/links/${supplier.id}` : null,
+      reason: this.payoutStatus === "failed" ? "Invalid beneficiary account" : this.balanceFailed,
+      paymentUrl: this.payoutStatus === "pending" && this.payoutVia === "page" ? `https://payments-test.cashfree.com/links/${supplier.id}` : null,
+      via: this.payoutStatus === "pending" ? this.payoutVia : ("balance" as const),
     };
     this.payouts.push(payout);
     return payout;

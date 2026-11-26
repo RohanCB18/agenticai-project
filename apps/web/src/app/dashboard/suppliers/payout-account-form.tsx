@@ -14,8 +14,8 @@ export function PayoutAccountForm() {
       <div>
         <p className="font-medium">Add a supplier Munshi can pay</p>
         <p className="text-sm text-muted">
-          Munshi pays only accounts added here, and asks for your OK every time. You pay a Cashfree payment page, and Cashfree sends the money on to
-          this account.
+          Munshi pays only accounts added here, and asks for your OK every time. It pays this account from your Cashfree balance; if the balance
+          can&apos;t, you get a Cashfree payment page to pay instead, and Cashfree sends the money on.
         </p>
       </div>
 

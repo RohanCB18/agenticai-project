@@ -4,7 +4,8 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { cashfreeSendsSms, createPaymentLink as createCashfreeLink, createUpiQr } from "@/lib/cashfree";
 import { cancelOpenRequests, reconcilePayments } from "@/lib/payments";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { maskedAccount, settlePayout } from "@/lib/supplier-payouts";
+import { BENEFICIARY_UNUSABLE, createBeneficiary, newBeneficiaryId, newTransferId, payoutsConfigured } from "@/lib/cashfree-payouts";
+import { maskedAccount, sendFromBalance, settlePayout, whyNotPaid } from "@/lib/supplier-payouts";
 
 const LINK_TTL_MS = 3 * 24 * 60 * 60 * 1000; // udhaar links stay valid for 3 days
 const SUPPLIER_LINK_TTL_MS = 24 * 60 * 60 * 1000; // a supplier payment page is for paying now, so a day
@@ -371,7 +372,7 @@ export function createSupabaseKhataStore(db: SupabaseClient, merchantId: string,
       const rows = must(
         await db
           .from("suppliers")
-          .select("id, name, payout_vpa, payout_account_last4, cashfree_beneficiary_id, beneficiary_verified")
+          .select(SUPPLIER_COLUMNS)
           .eq("merchant_id", merchantId)
           .order("name"),
         "List suppliers",
@@ -411,15 +412,10 @@ export function createSupabaseKhataStore(db: SupabaseClient, merchantId: string,
     async paySupplier({ supplier, amountPaise, supplierOrderId }): Promise<SupplierPayout> {
       // Checked again from the database: where money goes is never taken from the caller's copy.
       const row = must(
-        await db
-          .from("suppliers")
-          .select("id, name, payout_vpa, payout_account_last4, cashfree_beneficiary_id, beneficiary_verified")
-          .eq("id", supplier.id)
-          .eq("merchant_id", merchantId)
-          .single(),
+        await db.from("suppliers").select(SUPPLIER_COLUMNS).eq("id", supplier.id).eq("merchant_id", merchantId).single(),
         "Read supplier",
       ) as SupplierRow;
-      if (!row.beneficiary_verified || !row.cashfree_beneficiary_id) throw new Error("This supplier has no verified payout account");
+      if (!canPay(row)) throw new Error("This supplier has no verified payout account");
 
       // The owner approved in chat (signed AI SDK approval); keep that decision in the audit trail too.
       const approval = must(
@@ -443,29 +439,46 @@ export function createSupabaseKhataStore(db: SupabaseClient, merchantId: string,
         "Approve",
       );
 
-      // Easy Split: a Cashfree payment page the owner pays, all of it settled to the supplier's
-      // vendor account. Saved before Cashfree is asked, so a webhook that races the answer finds it.
+      // Each try is saved before Cashfree is asked, so a webhook that races the answer finds it.
       const admin = createAdminClient();
-      const linkId = `munshi_${crypto.randomUUID().replaceAll("-", "")}`.slice(0, 50);
       const mode = row.payout_vpa ? ("upi" as const) : ("banktransfer" as const);
-      const payout = must(
-        await admin
-          .from("supplier_payouts")
-          .insert({
-            merchant_id: merchantId,
-            supplier_id: row.id,
-            supplier_order_id: supplierOrderId ?? null,
-            approval_id: approval.id,
-            transfer_id: linkId,
-            provider: "easy_split",
-            amount_paise: amountPaise,
-            mode,
-          })
-          .select("id")
-          .single(),
-        "Save payout",
-      ) as { id: string };
+      const save = async (transferId: string, provider: "payouts" | "easy_split") =>
+        must(
+          await admin
+            .from("supplier_payouts")
+            .insert({ merchant_id: merchantId, supplier_id: row.id, supplier_order_id: supplierOrderId ?? null, approval_id: approval.id, transfer_id: transferId, provider, amount_paise: amountPaise, mode })
+            .select("id")
+            .single(),
+          "Save payout",
+        ) as { id: string };
+      const close = (status: "executed" | "failed") => admin.from("approvals").update({ status }).eq("id", approval.id);
 
+      // 1. Cashfree Payouts: straight from the shop's Cashfree balance, nothing more for the owner to do.
+      let why: string | null = null;
+      let tried: { id: string } | null = null;
+      const beneficiaryId = payoutsConfigured() ? await payoutBeneficiary(admin, merchantId, row) : null;
+      if (beneficiaryId) {
+        const transferId = newTransferId();
+        tried = await save(transferId, "payouts");
+        const event = await sendFromBalance({ transferId, amountPaise, beneficiaryId, mode, remarks: `Munshi payment to ${row.name}` });
+        console.info(`[munshi] supplier payment ${transferId}: from balance, ${event.status} (${event.statusCode ?? "-"})`);
+        if (event.status !== "pending") await settlePayout(admin, event);
+        if (event.status === "success" || event.status === "pending") {
+          await close("executed");
+          return { id: tried.id, status: event.status, amountPaise, utr: event.utr, reason: null, via: "balance" };
+        }
+        why = whyNotPaid(event);
+      }
+
+      // 2. Easy Split, the fallback: a Cashfree payment page the owner pays, all of it settled to the
+      // supplier's vendor account.
+      if (!row.cashfree_vendor_id) {
+        await close("failed");
+        if (tried) return { id: tried.id, status: "failed", amountPaise, utr: null, reason: why, via: "balance" };
+        throw new Error("This supplier has no account Munshi can pay right now");
+      }
+      const linkId = newTransferId();
+      const payout = await save(linkId, "easy_split");
       // The owner pays, so the page carries their name and number (Cashfree needs a phone).
       const { data: owner } = await admin.from("merchants").select("owner_name, shop_name, phone").eq("id", merchantId).single();
       const order = supplierOrderId ? (await db.from("supplier_orders").select("order_ref").eq("id", supplierOrderId).maybeSingle()).data : null;
@@ -480,37 +493,69 @@ export function createSupabaseKhataStore(db: SupabaseClient, merchantId: string,
           expiresAt: new Date(Date.now() + SUPPLIER_LINK_TTL_MS),
           notifyUrl: appUrl?.startsWith("https://") ? `${appUrl}/api/webhooks/cashfree` : undefined,
           notes: { merchant_id: merchantId, supplier_id: row.id, purpose: "supplier_payment" },
-          splits: [{ vendorId: row.cashfree_beneficiary_id, amountPaise }],
+          splits: [{ vendorId: row.cashfree_vendor_id, amountPaise }],
         });
       } catch (error) {
         console.error(`[munshi] supplier payment ${linkId}: Cashfree didn't make the page:`, error instanceof Error ? error.message : error);
         await settlePayout(admin, { transferId: linkId, status: "failed", statusCode: null, description: "Cashfree didn't make the payment page", utr: null, cfTransferId: null });
-        await admin.from("approvals").update({ status: "failed" }).eq("id", approval.id);
+        await close("failed");
         throw error;
       }
 
-      console.info(`[munshi] supplier payment ${linkId}: page made, split to vendor ${row.cashfree_beneficiary_id}`);
+      console.info(`[munshi] supplier payment ${linkId}: page made, split to vendor ${row.cashfree_vendor_id}${why ? ` (balance: ${why})` : ""}`);
       await admin.from("supplier_payouts").update({ payment_url: link.link_url, cf_transfer_id: String(link.cf_link_id) }).eq("id", payout.id);
-      await admin.from("approvals").update({ status: "executed" }).eq("id", approval.id);
-      return { id: payout.id, status: "pending", amountPaise, utr: null, reason: null, paymentUrl: link.link_url };
+      await close("executed");
+      return { id: payout.id, status: "pending", amountPaise, utr: null, reason: why, paymentUrl: link.link_url, via: "page" };
     },
   };
   return store;
 }
 
+const SUPPLIER_COLUMNS = "id, name, phone, payout_vpa, payout_account_last4, cashfree_beneficiary_id, cashfree_vendor_id, beneficiary_verified";
+
 type SupplierRow = {
   id: string;
   name: string;
+  phone: string | null;
   payout_vpa: string | null;
   payout_account_last4: string | null;
+  /** Cashfree Payouts beneficiary: paid from the shop's balance. */
   cashfree_beneficiary_id: string | null;
+  /** Easy Split vendor: paid through a page the owner pays, the fallback. */
+  cashfree_vendor_id: string | null;
   beneficiary_verified: boolean;
 };
+
+/**
+ * Munshi can pay this supplier: the owner's account is on and Cashfree knows it, or it is a UPI ID
+ * Payouts can register at the first payment (accounts saved before Payouts was the primary way).
+ */
+const canPay = (r: SupplierRow) => r.beneficiary_verified && Boolean(r.cashfree_beneficiary_id || r.cashfree_vendor_id || (payoutsConfigured() && r.payout_vpa));
 
 const toSupplier = (r: SupplierRow): Supplier => ({
   id: r.id,
   name: r.name,
   aliases: [],
-  account: r.cashfree_beneficiary_id ? maskedAccount(r) : null,
-  verified: r.beneficiary_verified && Boolean(r.cashfree_beneficiary_id),
+  account: r.cashfree_beneficiary_id || r.cashfree_vendor_id || r.payout_vpa ? maskedAccount(r) : null,
+  verified: canPay(r),
 });
+
+/**
+ * The supplier's Payouts beneficiary. A UPI ID the owner saved before Payouts was the primary way
+ * is registered now, the same UPI ID, so where money goes doesn't change. A bank account isn't:
+ * Munshi keeps only its last 4 digits, so the owner adds it again to pay it from the balance.
+ */
+async function payoutBeneficiary(admin: SupabaseClient, merchantId: string, row: SupplierRow): Promise<string | null> {
+  if (row.cashfree_beneficiary_id) return row.cashfree_beneficiary_id;
+  if (!row.payout_vpa) return null;
+  const id = newBeneficiaryId();
+  try {
+    const beneficiary = await createBeneficiary({ beneficiaryId: id, name: row.name, account: { vpa: row.payout_vpa }, phone: row.phone });
+    if (BENEFICIARY_UNUSABLE.includes(beneficiary.beneficiary_status ?? "")) return null;
+  } catch (error) {
+    console.warn(`[munshi] couldn't register ${row.name} with Cashfree Payouts:`, error instanceof Error ? error.message : error);
+    return null;
+  }
+  await admin.from("suppliers").update({ cashfree_beneficiary_id: id }).eq("id", row.id).eq("merchant_id", merchantId);
+  return id;
+}

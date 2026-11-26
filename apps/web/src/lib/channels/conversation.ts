@@ -30,7 +30,8 @@ import { answerReminders, startReminders } from "@/lib/reminder-runs";
 import { paymentNote, whatsappButton } from "@/lib/reminders";
 import { alertLowStock, decideRestock, RESTOCK_APPROVAL_PREFIX } from "@/lib/restock";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { reconcilePayouts } from "@/lib/supplier-payouts";
+import { payoutsConfigured } from "@/lib/cashfree-payouts";
+import { reconcilePayouts, watchPayouts } from "@/lib/supplier-payouts";
 import { traced } from "@/lib/telemetry";
 import { ON_DEMAND_KEY, REMINDER_APPROVAL_PREFIX } from "@/workflows/reminder-hook";
 import type { ChannelSender, Inbound, LinkButton, MessagingChannel } from "./types";
@@ -105,6 +106,7 @@ export async function handleInbound(inbound: Inbound, sender: ChannelSender) {
     const answer = await decideRestock(admin, merchant.id, inbound.approvalId, inbound.approved);
     await sender.sendText(chatId, answer.text, answer.buttons);
     if (answer.askAgain) await alertLowStock(admin, merchant.id);
+    if (answer.paying) await watchPayouts(admin, merchant.id, { forMs: watchTime(startedAt) }).catch(logWatchError);
     return;
   }
 
@@ -260,7 +262,17 @@ export async function handleInbound(inbound: Inbound, sender: ChannelSender) {
   // A sale or stock update may have taken something to its alert level: ask about restocking now,
   // after the reply. Skipped while an approval is waiting, so the owner answers one thing at a time.
   if (pendingApprovals(messages).length === 0) await alertLowStock(admin, merchant.id);
+
+  // A supplier payment from the balance that Cashfree hadn't confirmed yet: keep asking for the rest
+  // of this function's time, so "Paid" usually follows within seconds, webhook or not.
+  if (toolOutputs(responseMessages, "paySupplier").some((o) => (o as { status?: string }).status === "payout_started")) {
+    await watchPayouts(admin, merchant.id, { forMs: watchTime(startedAt) }).catch(logWatchError);
+  }
 }
+
+/** What is left of the webhook function's 60 s for watching a payment, with a margin. */
+const watchTime = (startedAt: number) => Math.max(0, 55_000 - (Date.now() - startedAt));
+const logWatchError = (error: unknown) => console.error("[munshi] payout watch failed:", error instanceof Error ? error.message : error);
 
 async function linkAccount(admin: SupabaseClient, inbound: Inbound & { kind: "link" }, sender: ChannelSender) {
   const { channel, chatId } = inbound;
@@ -346,7 +358,10 @@ function approvalPrompt(approval: PendingApproval, messages: ModelMessage[]) {
     // Where the money goes, from the supplierDues lookup (the owner's saved account), never from the model's words.
     const dues = toolOutputs(messages, "supplierDues").at(-1) as { supplier?: string; payTo?: string } | undefined;
     const to = dues?.payTo && dues.supplier?.toLowerCase() === supplierName?.toLowerCase() ? ` to ${dues.payTo}` : "";
-    return `🔐 Needs your OK\n\nPay ${supplierName ?? "the supplier"} ${amount ? formatINR(rupeesToPaise(amount)) : ""}${to}? Munshi makes a Cashfree payment page for you to pay, and Cashfree sends the money on.`;
+    const how = payoutsConfigured()
+      ? "Munshi pays it from your Cashfree balance; if the balance can't, you get a Cashfree page to pay instead."
+      : "Munshi makes a Cashfree payment page for you to pay, and Cashfree sends the money on.";
+    return `🔐 Needs your OK\n\nPay ${supplierName ?? "the supplier"} ${amount ? formatINR(rupeesToPaise(amount)) : ""}${to}? ${how}`;
   }
   if (approval.toolName === "sendPaymentLink") {
     const { customerName, amount } = (approval.input ?? {}) as { customerName?: string; amount?: number };

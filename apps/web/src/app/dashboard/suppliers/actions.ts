@@ -3,11 +3,17 @@
 import { revalidatePath } from "next/cache";
 import { getCurrentMerchant } from "@/lib/auth";
 import { createVendor, newVendorId, type PayoutAccount, VENDOR_UNUSABLE } from "@/lib/cashfree";
+import { BENEFICIARY_UNUSABLE, createBeneficiary, newBeneficiaryId, payoutsConfigured } from "@/lib/cashfree-payouts";
 import { createClient } from "@/lib/supabase/server";
 
 // Where supplier money goes is set here, by the signed-in owner, and nowhere else: the agent can
 // pay a verified account after the owner's OK, but has no way to add or change one. Each account
-// becomes a Cashfree Easy Split vendor, which Cashfree settles supplier payments to.
+// becomes a Cashfree Payouts beneficiary (paid from the shop's balance) and an Easy Split vendor
+// (the fallback: a page the owner pays, which Cashfree settles to the supplier).
+
+/** Cashfree's own words from a refused call, without the request details. */
+const cashfreeMessage = (error: unknown) =>
+  (error instanceof Error ? error.message : String(error)).replace(/^Cashfree (Payouts )?[a-z ]+ failed \(\d+\): /, "").slice(0, 160);
 
 export type PayoutAccountState = { error?: string; saved?: string };
 
@@ -69,16 +75,33 @@ export async function addPayoutAccount(_prev: PayoutAccountState, form: FormData
     supplierId = created.id as string;
   }
 
-  // A new vendor for every change of details: an old id never points somewhere new.
-  const vendorId = newVendorId();
-  let status: string;
-  try {
-    status = (await createVendor({ vendorId, name, email, phone, account, kyc })).status ?? "IN_BANK_VALIDATION";
-  } catch (error) {
-    const why = error instanceof Error ? error.message.replace(/^Cashfree add vendor failed \(\d+\): /, "").slice(0, 200) : "";
-    return { error: `Cashfree didn't accept this account. ${why}` };
+  // The same account in both of Cashfree's ways to pay: a Payouts beneficiary (primary: paid from
+  // the shop's balance) and an Easy Split vendor (fallback: a page the owner pays). New ids for every
+  // change of details, so an old id never points somewhere new.
+  const errors: string[] = [];
+  let beneficiaryId: string | null = null;
+  let beneficiaryStatus: string | null = null;
+  if (payoutsConfigured()) {
+    const id = newBeneficiaryId();
+    try {
+      beneficiaryStatus = (await createBeneficiary({ beneficiaryId: id, name, account, phone })).beneficiary_status ?? "INITIATED";
+      if (!BENEFICIARY_UNUSABLE.includes(beneficiaryStatus)) beneficiaryId = id;
+      else errors.push(`Payouts says this account is ${beneficiaryStatus.toLowerCase()}`);
+    } catch (error) {
+      errors.push(`Payouts: ${cashfreeMessage(error)}`);
+    }
   }
-  const usable = !VENDOR_UNUSABLE.includes(status);
+  let vendorId: string | null = null;
+  let vendorStatus: string | null = null;
+  const vendor = newVendorId();
+  try {
+    vendorStatus = (await createVendor({ vendorId: vendor, name, email, phone, account, kyc })).status ?? "IN_BANK_VALIDATION";
+    if (!VENDOR_UNUSABLE.includes(vendorStatus)) vendorId = vendor;
+    else errors.push(`Easy Split says this account is ${vendorStatus.toLowerCase().replaceAll("_", " ")}`);
+  } catch (error) {
+    errors.push(`Easy Split: ${cashfreeMessage(error)}`);
+  }
+  if (!beneficiaryId && !vendorId) return { error: `Cashfree didn't accept this account. ${errors.join("; ")}. Check the details with ${name}.` };
 
   const { error } = await db
     .from("suppliers")
@@ -87,9 +110,10 @@ export async function addPayoutAccount(_prev: PayoutAccountState, form: FormData
       payout_vpa: "vpa" in account ? account.vpa : null,
       payout_account_last4: "bankAccount" in account ? account.bankAccount.slice(-4) : null,
       payout_ifsc: "ifsc" in account ? account.ifsc : null,
-      cashfree_beneficiary_id: vendorId,
-      beneficiary_status: status,
-      beneficiary_verified: usable,
+      cashfree_beneficiary_id: beneficiaryId,
+      cashfree_vendor_id: vendorId,
+      beneficiary_status: beneficiaryStatus ?? vendorStatus,
+      beneficiary_verified: true,
     })
     .eq("id", supplierId)
     .eq("merchant_id", merchant.id);
@@ -98,13 +122,14 @@ export async function addPayoutAccount(_prev: PayoutAccountState, form: FormData
     merchant_id: merchant.id,
     actor: "owner",
     action: "supplier_payout_account_added",
-    details: { supplierId, method: "vpa" in account ? "upi" : "bank", cashfreeVendorStatus: status },
+    details: { supplierId, method: "vpa" in account ? "upi" : "bank", payouts: beneficiaryStatus, easySplit: vendorStatus },
   });
 
   revalidatePath("/dashboard/suppliers");
-  return usable
-    ? { saved: `${name} can now be paid through Munshi, after your OK each time.` }
-    : { error: `Cashfree says this account is ${status.toLowerCase().replaceAll("_", " ")}. Check the details with ${name}.` };
+  const ways = beneficiaryId
+    ? `from your Cashfree balance${vendorId ? ", or with a payment page if that fails" : ""}`
+    : "with a Cashfree payment page you pay";
+  return { saved: `${name} can now be paid through Munshi, ${ways}, after your OK each time.${errors.length ? ` (${errors.join("; ")}.)` : ""}` };
 }
 
 /** Stops Munshi paying a supplier until the owner adds an account again. */

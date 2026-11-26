@@ -55,6 +55,6 @@ describe("the web chat's reply footer", () => {
       output: { status: "payout_started", supplier: "Sharma Traders", amount: "₹500", to: "UPI su•••@upi" },
     };
     const messages = chat(user("u1", "Sharma Traders ko payment kar do"), assistant("a1", [paid, { type: "text", text: "Payment shuru ho gaya." }]));
-    expect(footerFor(messages, 1, true)).toEqual({ receipts: ["💸 Paying Sharma Traders ₹500 to UPI su•••@upi · started, Munshi will confirm"], notice: null });
+    expect(footerFor(messages, 1, true)).toEqual({ receipts: ["💸 Paying Sharma Traders ₹500 to UPI su•••@upi from your Cashfree balance · started, Munshi will confirm"], notice: null });
   });
 });

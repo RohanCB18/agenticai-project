@@ -160,6 +160,37 @@ describe("the owner's tap", () => {
     expect(rows[0]).toMatchObject({ status: "executed", note: { orderId: "ST-1A2B" } });
   });
 
+  it("haan with Cashfree Payouts: pays from the balance, with no page and nothing more to tap", async () => {
+    const { agent, book, approvalId } = await asked();
+    store.payoutStatus = "success";
+    const paid = await answerRestock({ store, book, supplier: agent, now: NOW }, approvalId, true);
+    expect(paid.text).toContain("💸 Paid ₹1,990 to Sharma Traders from your Cashfree balance (to UPI su•••@upi). UTR UTR123.");
+    expect(paid.buttons).toBeUndefined();
+    expect(paid.paying).toBeUndefined();
+  });
+
+  it("haan while Cashfree is still sending: says so, and asks to be watched", async () => {
+    const { agent, book, approvalId } = await asked();
+    store.payoutVia = "balance";
+    const started = await answerRestock({ store, book, supplier: agent, now: NOW }, approvalId, true);
+    expect(started.text).toContain("💸 Paying ₹1,990 to Sharma Traders from your Cashfree balance");
+    expect(started).toMatchObject({ paying: true });
+  });
+
+  it("haan when the balance couldn't pay: the page to pay instead, and why", async () => {
+    const { agent, book, approvalId } = await asked();
+    store.balanceFailed = "not enough money in your Cashfree Payouts balance";
+    const answer = await answerRestock({ store, book, supplier: agent, now: NOW }, approvalId, true);
+    expect(answer.text).toContain("Your Cashfree balance couldn't pay it (not enough money in your Cashfree Payouts balance), so pay ₹1,990 to Sharma Traders here:");
+    expect(answer.buttons).toHaveLength(1);
+  });
+
+  it("the ask says the balance pays when Payouts is set up", async () => {
+    const { chats, asks } = memoryChats();
+    await askToRestock({ store, book: memoryBook().book, chats, supplier: wholesaler().agent, shopName: "RCB", fromBalance: true, now: NOW });
+    expect(asks[0]!.text).toContain("pays Sharma Traders ₹1,990 from your Cashfree balance (to UPI su•••@upi)");
+  });
+
   it("a second tap does nothing", async () => {
     const { agent, book, ordered, approvalId } = await asked();
     await answerRestock({ store, book, supplier: agent, now: NOW }, approvalId, true);

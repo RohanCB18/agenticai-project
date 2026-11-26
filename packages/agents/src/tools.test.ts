@@ -552,6 +552,25 @@ describe("paying suppliers", () => {
     expect(await tools.paySupplier.execute!({ supplierName: "Sharma Traders", amount: 4200 }, ctx)).toMatchObject({ status: "payout_failed", reason: "Invalid beneficiary account" });
   });
 
+  it("says a payment from the balance has started, and never that it arrived", async () => {
+    store.payoutVia = "balance";
+    const out = await tools.paySupplier.execute!({ supplierName: "Sharma Traders", amount: 4200 }, ctx);
+    expect(out).toMatchObject({ status: "payout_started", hint: expect.stringContaining("Never say it has reached them") });
+    expect(out).not.toHaveProperty("url");
+    expect(receiptLines([{ tool: "paySupplier", output: out as Record<string, unknown> }])).toEqual([
+      "💸 Paying Sharma Traders ₹4,200 to UPI su•••@upi from your Cashfree balance · started, Munshi will confirm",
+    ]);
+  });
+
+  it("falls back to a page to pay, and says why the balance didn't", async () => {
+    store.balanceFailed = "not enough money in your Cashfree Payouts balance";
+    expect(await tools.paySupplier.execute!({ supplierName: "Sharma Traders", amount: 4200 }, ctx)).toMatchObject({
+      status: "pay_link",
+      balanceFailed: "not enough money in your Cashfree Payouts balance",
+      hint: expect.stringContaining("Paying from the Cashfree balance didn't work (not enough money in your Cashfree Payouts balance), so instead a Cashfree payment page"),
+    });
+  });
+
   it("never pays an account the owner hasn't confirmed, or a supplier it doesn't know", async () => {
     store.suppliers[0]!.verified = false;
     expect(await tools.paySupplier.execute!({ supplierName: "Sharma Traders", amount: 4200 }, ctx)).toMatchObject({

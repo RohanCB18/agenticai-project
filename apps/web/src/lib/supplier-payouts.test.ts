@@ -1,13 +1,18 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { getLink, paidOnLinkOrders } from "./cashfree";
+import { getTransfer, type Transfer } from "./cashfree-payouts";
 import { notifyOwner } from "./payments";
-import { linkOutcome, maskedAccount, payoutNotice, reconcilePayouts, settleSupplierLink } from "./supplier-payouts";
+import { linkOutcome, maskedAccount, payoutNotice, reconcilePayouts, sendFromBalance, settleSupplierLink, watchPayouts, whyNotPaid } from "./supplier-payouts";
 
 vi.mock("./cashfree", async (original) => ({
   ...(await original<typeof import("./cashfree")>()),
   getLink: vi.fn(),
   paidOnLinkOrders: vi.fn(),
+}));
+vi.mock("./cashfree-payouts", async (original) => ({
+  ...(await original<typeof import("./cashfree-payouts")>()),
+  getTransfer: vi.fn(),
 }));
 vi.mock("./payments", () => ({ notifyOwner: vi.fn(async () => {}) }));
 
@@ -112,15 +117,107 @@ describe("reconcilePayouts", () => {
     expect(payouts[0]!.status).toBe("failed");
   });
 
-  it("only asks about this shop's Easy Split payments that are still waiting", async () => {
+  it("only asks about this shop's payments still waiting, each the way it was made", async () => {
     payouts.push({ merchant_id: "m2", transfer_id: "munshi_other", provider: "easy_split", status: "pending", amount_paise: 100, created_at: minutesAgo(1) });
     payouts.push({ merchant_id: "m1", transfer_id: "munshi_done", provider: "easy_split", status: "success", amount_paise: 100, created_at: minutesAgo(1) });
-    // Made through Cashfree Payouts before the move: a transfer, not a link.
-    payouts.push({ merchant_id: "m1", transfer_id: "munshi_old", provider: "payouts", status: "pending", amount_paise: 100, created_at: minutesAgo(1) });
+    payouts.push({ merchant_id: "m1", transfer_id: "munshi_xfer", provider: "payouts", status: "pending", amount_paise: 100, created_at: minutesAgo(1) });
     vi.mocked(getLink).mockResolvedValue({ link_status: "ACTIVE", link_amount_paid: 0 });
     vi.mocked(paidOnLinkOrders).mockResolvedValue(0);
-    await reconcilePayouts(db, "m1");
+    vi.mocked(getTransfer).mockResolvedValue(transfer("RECEIVED"));
+    expect(await reconcilePayouts(db, "m1")).toBe(2);
     expect(vi.mocked(getLink).mock.calls.map(([id]) => id)).toEqual(["munshi_link1"]);
+    expect(vi.mocked(getTransfer).mock.calls.map(([id]) => id)).toEqual(["munshi_xfer"]);
+  });
+
+  it("records a transfer from the balance that Cashfree finished, and tells the owner", async () => {
+    payouts[0] = { merchant_id: "m1", transfer_id: "munshi_xfer", provider: "payouts", status: "pending", amount_paise: 10000, created_at: minutesAgo(1) };
+    vi.mocked(getTransfer).mockResolvedValue({ ...transfer("SUCCESS"), transfer_utr: "UTR77" });
+    expect(await reconcilePayouts(db, "m1")).toBe(0);
+    expect(payouts[0]!.status).toBe("success");
+    expect(notifyOwner).toHaveBeenCalledWith(db, "m1", "✅ Paid SHARMA TRADERS ₹100 from your Cashfree balance. UTR UTR77.");
+  });
+});
+
+const transfer = (status: string, over: Partial<Transfer> = {}): Transfer => ({ transfer_id: "munshi_xfer", cf_transfer_id: 1, status, ...over });
+
+describe("paying from the balance", () => {
+  const input = { transferId: "munshi_xfer", amountPaise: 10000, beneficiaryId: "munshi_ben", mode: "upi" as const, remarks: "Munshi" };
+  const sleep = async () => {};
+
+  it("waits a few seconds for Cashfree to finish, and reports what it said", async () => {
+    const create = vi.fn(async () => transfer("RECEIVED"));
+    const get = vi.fn().mockResolvedValueOnce(transfer("PENDING")).mockResolvedValueOnce({ ...transfer("SUCCESS"), transfer_utr: "UTR1" });
+    expect(await sendFromBalance(input, { create, get, sleep })).toMatchObject({ transferId: "munshi_xfer", status: "success", utr: "UTR1" });
+    expect(get).toHaveBeenCalledTimes(2);
+  });
+
+  it("says why a rejected transfer wasn't made, in words the owner can act on", async () => {
+    const create = vi.fn(async () => transfer("RECEIVED"));
+    const get = vi.fn(async () => transfer("REJECTED", { status_code: "ERROR_SELECTING_FUND_SOURCE", status_description: "Error selecting fund source" }));
+    const event = await sendFromBalance(input, { create, get, sleep });
+    expect(event.status).toBe("failed");
+    expect(whyNotPaid(event)).toContain("the Payouts keys must come from the account that holds the wallet");
+  });
+
+  it("counts a transfer Cashfree refused outright as not made", async () => {
+    const create = vi.fn(async () => {
+      throw new Error('Cashfree Payouts transfer failed (422): {"type":"invalid_request_error","code":"insufficient_balance","message":"Not enough balance"}');
+    });
+    const get = vi.fn();
+    const event = await sendFromBalance(input, { create, get, sleep });
+    expect(event).toMatchObject({ status: "failed", statusCode: "INSUFFICIENT_BALANCE", description: "Not enough balance" });
+    expect(whyNotPaid(event)).toBe("not enough money in your Cashfree Payouts balance");
+    expect(get).not.toHaveBeenCalled();
+  });
+
+  it("never calls a transfer failed when its answer was lost: it may have been made", async () => {
+    const lost = vi.fn(async () => {
+      throw new Error("Cashfree Payouts transfer didn't answer within 15 s");
+    });
+    // Cashfree has it after all.
+    expect(await sendFromBalance(input, { create: lost, get: vi.fn(async () => transfer("SUCCESS")), sleep })).toMatchObject({ status: "success" });
+    // Cashfree can't say either: still pending, so nothing pays it a second time.
+    const down = vi.fn(async () => {
+      throw new Error("Cashfree Payouts transfer status failed (503): unavailable");
+    });
+    expect(await sendFromBalance(input, { create: lost, get: down, sleep })).toMatchObject({ status: "pending" });
+    // Cashfree has no such transfer: it never took it.
+    const unknown = vi.fn(async () => {
+      throw new Error("Cashfree Payouts transfer status failed (404): transfer not found");
+    });
+    expect(await sendFromBalance(input, { create: lost, get: unknown, sleep })).toMatchObject({ status: "failed" });
+  });
+
+  it("stops waiting after a few seconds and leaves it pending", async () => {
+    const get = vi.fn(async () => transfer("PENDING"));
+    expect(await sendFromBalance(input, { create: vi.fn(async () => transfer("RECEIVED")), get, sleep, waitMs: 6_000, everyMs: 2_000 })).toMatchObject({ status: "pending" });
+    expect(get).toHaveBeenCalledTimes(3);
+  });
+});
+
+describe("watchPayouts", () => {
+  it("is one quick read when nothing is on its way", async () => {
+    const sleep = vi.fn(async () => {});
+    expect(await watchPayouts(db, "m1", { forMs: 30_000, sleep })).toBe(true);
+    expect(sleep).not.toHaveBeenCalled();
+    expect(getLink).not.toHaveBeenCalled(); // a page waiting for the owner isn't watched
+  });
+
+  it("checks a transfer from the balance until Cashfree says how it ended", async () => {
+    payouts.push({ merchant_id: "m1", transfer_id: "munshi_xfer", provider: "payouts", status: "pending", amount_paise: 10000, created_at: minutesAgo(0) });
+    vi.mocked(getTransfer).mockResolvedValueOnce(transfer("PENDING")).mockResolvedValueOnce(transfer("SUCCESS"));
+    const sleep = vi.fn(async () => {});
+    expect(await watchPayouts(db, "m1", { forMs: 30_000, sleep })).toBe(true);
+    expect(sleep).toHaveBeenCalledTimes(1);
+    expect(notifyOwner).toHaveBeenCalledWith(db, "m1", expect.stringContaining("from your Cashfree balance"));
+  });
+
+  it("gives up when the time is up", async () => {
+    payouts.push({ merchant_id: "m1", transfer_id: "munshi_xfer", provider: "payouts", status: "pending", amount_paise: 10000, created_at: minutesAgo(0) });
+    vi.mocked(getTransfer).mockResolvedValue(transfer("PENDING"));
+    const sleep = vi.fn(async () => {});
+    expect(await watchPayouts(db, "m1", { forMs: 8_000, everyMs: 4_000, sleep })).toBe(false);
+    expect(sleep).toHaveBeenCalledTimes(2);
   });
 });
 
@@ -131,6 +228,6 @@ describe("what the owner sees", () => {
   });
 
   it("says nothing while the owner hasn't paid yet", () => {
-    expect(payoutNotice({ supplier_name: "Sharma Traders", amount_paise: 10000, status: "pending" }, { utr: null, description: null })).toBeNull();
+    expect(payoutNotice({ supplier_name: "Sharma Traders", amount_paise: 10000, status: "pending" }, { utr: null, description: null }, "easy_split")).toBeNull();
   });
 });

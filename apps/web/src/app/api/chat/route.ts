@@ -5,6 +5,7 @@ import { ApprovalSecretMissingError, buildKhataAgent } from "@/lib/agent";
 import { alertLowStock } from "@/lib/restock";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
+import { watchPayouts } from "@/lib/supplier-payouts";
 import { flushTraces, traced } from "@/lib/telemetry";
 import { closeStaleApprovals, replySummary, saveWebChat } from "@/lib/web-chat";
 
@@ -43,9 +44,15 @@ export async function POST(request: Request) {
   // after() runs once the stream has finished, so the trace is complete before it is sent. Then,
   // as after a Telegram turn, anything the chat took to its alert level gets a restock ask (on the
   // owner's chat app, where the Haan button lives).
+  // A supplier payment from the balance still on its way gets watched too, so the owner hears
+  // "Paid" on their chat app within seconds (one quick read when nothing is on its way).
   after(async () => {
     await flushTraces();
-    await alertLowStock(createAdminClient(), merchant.id);
+    const admin = createAdminClient();
+    await alertLowStock(admin, merchant.id);
+    await watchPayouts(admin, merchant.id, { forMs: 25_000 }).catch((error: unknown) =>
+      console.error("[munshi] payout watch failed:", error instanceof Error ? error.message : error),
+    );
   });
   const streamAgent = agent;
   return traced({ merchantId: merchant.id, channel: "chat", source: source === "voice" ? "voice" : undefined }, () =>

@@ -53,7 +53,8 @@ export type Supplier = { id: string; name: string; aliases: string[]; account: s
 /** A wholesaler order not yet paid (nor being paid). */
 export type SupplierOrderDue = { id: string; orderRef: string; totalPaise: Paise; createdAt: string };
 /** A supplier payment. With Cashfree Easy Split it starts as a payment page (paymentUrl) the owner pays. */
-export type SupplierPayout = { id: string; status: "pending" | "success" | "failed" | "reversed"; amountPaise: Paise; utr: string | null; reason: string | null; paymentUrl?: string | null };
+/** How a supplier payment went. `via` "balance": Cashfree Payouts, from the shop's balance; "page": an Easy Split page the owner pays (then `reason` says why the balance didn't pay, if it was tried). */
+export type SupplierPayout = { id: string; status: "pending" | "success" | "failed" | "reversed"; amountPaise: Paise; utr: string | null; reason: string | null; paymentUrl?: string | null; via?: "balance" | "page" };
 
 export interface KhataStore {
   listCustomers(): Promise<Customer[]>;

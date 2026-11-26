@@ -52,12 +52,19 @@ describe("what is low, and how much to order", () => {
 
 describe("the restock ask", () => {
   it("shows what is low, the quote, and what one haan does", () => {
-    const { text, canOrder } = restockAlert([rice, dal], quote(), "UPI su•••@upi");
+    const { text, canOrder } = restockAlert([rice, dal], quote(), { to: "UPI su•••@upi", fromBalance: true });
     expect(canOrder).toBe(true);
     expect(text).toContain("📦 Running low: Rice 8 kg left (alert at 10 kg), Toor Dal 5 kg left (alert at 5 kg).");
     expect(text).toContain("• Sona Masoori Rice: 25 kg, ₹1,300");
     expect(text).toContain("Total ₹1,990 · delivery Fri 28 Nov, 10 am to 1 pm");
-    expect(text).toContain("Haan: Munshi places this order and sends you a Cashfree page to pay Sharma Traders ₹1,990 (it goes to UPI su•••@upi).");
+    expect(text).toContain("Haan: Munshi places this order and pays Sharma Traders ₹1,990 from your Cashfree balance (to UPI su•••@upi).");
+    expect(text).toContain("If the balance can't, you get a Cashfree page to pay instead.");
+  });
+
+  it("offers the page to pay when Munshi can't pay from the balance", () => {
+    expect(restockAlert([rice], quote(), { to: "UPI su•••@upi", fromBalance: false }).text).toContain(
+      "Haan: Munshi places this order and sends you a Cashfree page to pay Sharma Traders ₹1,990 (it goes to UPI su•••@upi).",
+    );
   });
 
   it("orders to pay on delivery when the supplier has no account in Munshi", () => {
@@ -79,14 +86,22 @@ describe("the restock ask", () => {
 describe("after haan", () => {
   const order: SupplierOrder = { supplier: "Sharma Traders", orderId: "ST-1A2B", lines: [], total: "₹1,990", totalPaise: 199000, deliverySlot: "Fri 28 Nov", payment: "" };
 
-  it("gives the order and the page to pay it", () => {
-    const text = restockOrdered(order, { url: "https://pay.example/x", to: "UPI su•••@upi" });
-    expect(text).toContain("✅ Order ST-1A2B placed with Sharma Traders: ₹1,990, delivery Fri 28 Nov.");
-    expect(text).toContain("💸 Pay ₹1,990 to Sharma Traders here: https://pay.example/x");
+  it("gives the order and the payment from the balance", () => {
+    const paid = restockOrdered(order, { status: "paid", to: "UPI su•••@upi", utr: "UTR9" });
+    expect(paid).toContain("✅ Order ST-1A2B placed with Sharma Traders: ₹1,990, delivery Fri 28 Nov.");
+    expect(paid).toContain("💸 Paid ₹1,990 to Sharma Traders from your Cashfree balance (to UPI su•••@upi). UTR UTR9.");
+    expect(restockOrdered(order, { status: "started", to: "UPI su•••@upi" })).toContain("Munshi tells you as soon as it reaches them.");
   });
 
-  it("says plainly when there is no page", () => {
+  it("gives the page to pay when the balance couldn't, and says why", () => {
+    expect(restockOrdered(order, { status: "page", url: "https://pay.example/x", to: "UPI su•••@upi" })).toContain("💸 Pay ₹1,990 to Sharma Traders here: https://pay.example/x");
+    expect(restockOrdered(order, { status: "page", url: "https://pay.example/x", to: "UPI su•••@upi", because: "not enough money in your Cashfree Payouts balance" })).toContain(
+      "💸 Your Cashfree balance couldn't pay it (not enough money in your Cashfree Payouts balance), so pay ₹1,990 to Sharma Traders here: https://pay.example/x",
+    );
+  });
+
+  it("says plainly when nothing was paid", () => {
     expect(restockOrdered(order, null)).toContain("Pay on delivery.");
-    expect(restockOrdered(order, { error: "Cashfree was down" })).toContain("Nothing was paid");
+    expect(restockOrdered(order, { status: "failed", error: "Cashfree was down" })).toContain("Nothing was paid");
   });
 });

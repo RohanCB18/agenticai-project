@@ -54,8 +54,8 @@ describe("receiptLines", () => {
       "🧾 Stock: Rice now 50 kg",
       "🧾 New customer: Anand",
       "🧾 Customer: Fatima Begum (was Fatima) · phone 9800000002",
-      "💸 Paying Sharma Traders ₹4,200 to UPI su•••@upi · started, Munshi will confirm",
-      "💸 Paid Sharma Traders ₹1,500 to UPI su•••@upi · UTR UTR9",
+      "💸 Paying Sharma Traders ₹4,200 to UPI su•••@upi from your Cashfree balance · started, Munshi will confirm",
+      "💸 Paid Sharma Traders ₹1,500 to UPI su•••@upi from your Cashfree balance · UTR UTR9",
     ]);
   });
 });

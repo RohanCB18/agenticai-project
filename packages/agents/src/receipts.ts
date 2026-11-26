@@ -82,8 +82,8 @@ export function receiptLines(actions: Action[]): string[] {
           output.status === "pay_link"
             ? `💸 Payment page for ${s(output.supplier)} ${s(output.amount)} · pay it and Cashfree sends it to ${s(output.to)}`
             : output.status === "paid"
-            ? `💸 Paid ${s(output.supplier)} ${s(output.amount)} to ${s(output.to)}${output.utr ? ` · UTR ${s(output.utr)}` : ""}`
-            : `💸 Paying ${s(output.supplier)} ${s(output.amount)} to ${s(output.to)} · started, Munshi will confirm`,
+            ? `💸 Paid ${s(output.supplier)} ${s(output.amount)} to ${s(output.to)} from your Cashfree balance${output.utr ? ` · UTR ${s(output.utr)}` : ""}`
+            : `💸 Paying ${s(output.supplier)} ${s(output.amount)} to ${s(output.to)} from your Cashfree balance · started, Munshi will confirm`,
         ];
       case "placeSupplierOrder":
         return [`🚚 Order ${s(output.orderId)} to ${s(output.supplier)}: ${s(output.total)} · delivery ${s(output.deliverySlot)}${output.notSaved ? " · not saved in Munshi" : ""}`];

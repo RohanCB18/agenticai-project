@@ -15,13 +15,15 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { telegramSender } from "@/lib/channels/telegram";
 import type { ApprovalLabels, LinkButton, MessagingChannel } from "@/lib/channels/types";
 import { whatsappSender } from "@/lib/channels/whatsapp";
+import { payoutsConfigured } from "@/lib/cashfree-payouts";
 import { createSupabaseKhataStore } from "@/lib/khata-store";
 import { configuredSupplier } from "@/lib/supplier";
 
 // Restocking on Munshi's own initiative, end to end. When something falls to the alert level the
 // owner set, Munshi asks once on their chat app with the wholesaler's signed quote; one "haan"
-// places exactly that order and sends the Cashfree page to pay the supplier. Asked again for the
-// same product only after 3 days, so a low item doesn't nag after every message.
+// places exactly that order and pays the supplier from the shop's Cashfree balance (Payouts), or,
+// when the balance can't, sends a Cashfree page to pay (Easy Split). Asked again for the same
+// product only after 3 days, so a low item doesn't nag after every message.
 //
 // Each ask is a row in `approvals` (action purchase_order, payload.kind "restock"): pending until
 // the owner taps, then executed, rejected, failed or expired, like the other approvals.
@@ -50,7 +52,8 @@ export interface OwnerChats {
   tell(text: string, buttons?: LinkButton[]): Promise<void>;
 }
 
-export type RestockDeps = { store: KhataStore; book: RestockBook; chats: OwnerChats; supplier?: SupplierAgent; shopName: string; now?: Date };
+/** `fromBalance`: Cashfree Payouts is set up, so a "haan" pays from the shop's balance. */
+export type RestockDeps = { store: KhataStore; book: RestockBook; chats: OwnerChats; supplier?: SupplierAgent; shopName: string; fromBalance?: boolean; now?: Date };
 
 const sameName = (a: string, b: string) => a.trim().toLowerCase() === b.trim().toLowerCase();
 
@@ -63,7 +66,7 @@ async function payeeFor(store: KhataStore, wholesaler: string): Promise<Supplier
  * Asks the owner about anything newly low, with the wholesaler's quote and a Haan button when it
  * can be ordered. "none" when there is nothing new to ask or nowhere to ask it.
  */
-export async function askToRestock({ store, book, chats, supplier, shopName, now = new Date() }: RestockDeps): Promise<"none" | "asked" | "told"> {
+export async function askToRestock({ store, book, chats, supplier, shopName, fromBalance = false, now = new Date() }: RestockDeps): Promise<"none" | "asked" | "told"> {
   if (chats.count === 0) return "none";
   const low = lowProducts(await store.listProducts());
   if (low.length === 0) return "none";
@@ -82,7 +85,7 @@ export async function askToRestock({ store, book, chats, supplier, shopName, now
     }
   }
   const payee = quote ? await payeeFor(store, quote.supplier) : undefined;
-  const { text, canOrder } = restockAlert(fresh, quote, payee?.account ?? null, problem);
+  const { text, canOrder } = restockAlert(fresh, quote, payee ? { to: payee.account!, fromBalance } : null, problem);
   const id = await book.open({
     productIds: fresh.map((p) => p.id),
     quoteId: canOrder ? quote!.quoteId! : null,
@@ -100,11 +103,13 @@ export async function askToRestock({ store, book, chats, supplier, shopName, now
   return "asked";
 }
 
-export type RestockAnswer = { text: string; buttons?: LinkButton[]; askAgain?: boolean };
+/** `paying`: a transfer from the balance is on its way, so the caller watches it to say when it lands. */
+export type RestockAnswer = { text: string; buttons?: LinkButton[]; askAgain?: boolean; paying?: boolean };
 
 /**
  * The owner's tap on a restock ask. "Haan" orders exactly the quote they were shown and, when the
- * supplier's account is set up, makes the Cashfree page to pay it: no further question.
+ * supplier's account is set up, pays for it: from the Cashfree balance, or with a page to pay when
+ * the balance can't. No further question.
  */
 export async function answerRestock({ store, book, supplier, now = new Date() }: Omit<RestockDeps, "chats" | "shopName">, approvalId: string, approved: boolean): Promise<RestockAnswer> {
   const id = approvalId.slice(RESTOCK_APPROVAL_PREFIX.length);
@@ -147,13 +152,19 @@ export async function answerRestock({ store, book, supplier, now = new Date() }:
   try {
     const due = (await store.unpaidSupplierOrders(payee.name)).find((o) => o.orderRef === order.orderId);
     const payout = await store.paySupplier({ supplier: payee, amountPaise: order.totalPaise, supplierOrderId: due?.id });
-    if (payout.paymentUrl) {
-      return { text: restockOrdered(order, { url: payout.paymentUrl, to: payee.account! }), buttons: [{ text: `Pay ${order.total} to ${order.supplier}`, url: payout.paymentUrl }] };
+    const to = payee.account!;
+    if (payout.status === "success") return { text: restockOrdered(order, { status: "paid", to, utr: payout.utr }) };
+    if (payout.status === "pending" && payout.paymentUrl) {
+      return {
+        text: restockOrdered(order, { status: "page", url: payout.paymentUrl, to, because: payout.reason }),
+        buttons: [{ text: `Pay ${order.total} to ${order.supplier}`, url: payout.paymentUrl }],
+      };
     }
-    return { text: restockOrdered(order, { error: payout.reason ?? "Cashfree made no payment page" }) };
+    if (payout.status === "pending") return { text: restockOrdered(order, { status: "started", to }), paying: true };
+    return { text: restockOrdered(order, { status: "failed", error: payout.reason ?? "Cashfree didn't pay it" }) };
   } catch (error) {
-    console.error("[munshi] restock payment page failed:", error instanceof Error ? error.message : error);
-    return { text: restockOrdered(order, { error: "Cashfree didn't make the page" }) };
+    console.error("[munshi] restock payment failed:", error instanceof Error ? error.message : error);
+    return { text: restockOrdered(order, { status: "failed", error: "Cashfree didn't take the payment" }) };
   }
 }
 
@@ -251,6 +262,7 @@ export async function alertLowStock(admin: SupabaseClient, merchantId: string) {
       chats,
       supplier: configuredSupplier(),
       shopName: shop?.shop_name ?? "Shop",
+      fromBalance: payoutsConfigured(),
     });
   } catch (error) {
     console.error("[munshi] low-stock check failed:", error instanceof Error ? error.message : error);

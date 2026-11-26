@@ -954,7 +954,7 @@ export function createKhataTools(store: KhataStore, shopName = "your shop", opti
 
     paySupplier: tool({
       description:
-        "Pay a supplier or wholesaler through Cashfree: makes a Cashfree payment page for the amount, which the owner pays, and Cashfree sends that money on to the UPI ID or bank account the owner added and confirmed in Munshi's dashboard. Moves real money, so call it only after supplierDues and the owner's yes; the owner then approves it with a button.",
+        "Pay a supplier or wholesaler through Cashfree: pays the amount from the shop's Cashfree balance to the UPI ID or bank account the owner added and confirmed in Munshi's dashboard, or, if the balance can't pay, makes a Cashfree payment page the owner pays, which Cashfree sends on to the supplier. Moves real money, so call it only after supplierDues and the owner's yes; the owner then approves it with a button.",
       inputSchema: z.object({ supplierName: z.string(), amount: Rupees }),
       execute: async ({ supplierName, amount }) => {
         const r = await resolveSupplier(store, supplierName);
@@ -978,22 +978,27 @@ export function createKhataTools(store: KhataStore, shopName = "your shop", opti
         }
         await store.audit("supplier_payout", { supplierId: r.supplier.id, payoutId: payout.id, amountPaise, status: payout.status });
         const base = { supplier: r.supplier.name, amount: formatINR(amountPaise), to: r.supplier.account, ...(order ? { forOrder: order.orderRef } : {}) };
-        if (payout.status === "success") return { status: "paid", ...base, utr: payout.utr };
+        if (payout.status === "success") {
+          return { status: "paid", ...base, utr: payout.utr, hint: `Paid from the owner's Cashfree balance: tell them ${base.amount} reached ${r.supplier.name}${payout.utr ? ", with the UTR" : ""}.` };
+        }
         if (payout.status === "failed") {
-          return { status: "payout_failed", ...base, reason: payout.reason, hint: "Tell the owner the payment failed and nothing left their account." };
+          return { status: "payout_failed", ...base, reason: payout.reason, hint: "Tell the owner the payment failed, why, and that nothing was paid." };
         }
         if (payout.paymentUrl) {
+          // The fallback: the balance couldn't pay (reason says why) or isn't set up.
+          const instead = payout.reason ? `Paying from the Cashfree balance didn't work (${payout.reason}), so instead a` : "A";
           return {
             status: "pay_link",
             ...base,
             url: payout.paymentUrl,
-            hint: `A Cashfree payment page for ${base.amount} to ${r.supplier.name} is ready, and Munshi sends it to the owner with this reply. Tell the owner to open it and pay; Cashfree sends the money on to ${r.supplier.name}, and Munshi confirms once it is paid. Nothing is paid until they pay on that page: never say it is paid.`,
+            ...(payout.reason ? { balanceFailed: payout.reason } : {}),
+            hint: `${instead} Cashfree payment page for ${base.amount} to ${r.supplier.name} is ready, and Munshi sends it to the owner with this reply. Tell the owner to open it and pay; Cashfree sends the money on to ${r.supplier.name}, and Munshi confirms once it is paid. Nothing is paid until they pay on that page: never say it is paid.`,
           };
         }
         return {
           status: "payout_started",
           ...base,
-          hint: "Cashfree has taken the payment but not confirmed it yet: it can still be refused. Tell the owner it has started and that Munshi will message them as soon as Cashfree says it reached the supplier or failed. Never say it has reached them.",
+          hint: "Cashfree has taken the payment from the owner's Cashfree balance but not confirmed it yet: it can still be refused. Tell the owner it has started and that Munshi will message them as soon as Cashfree says it reached the supplier or failed. Never say it has reached them.",
         };
       },
     }),
