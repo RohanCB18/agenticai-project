@@ -516,6 +516,17 @@ describe("paying suppliers", () => {
     });
   });
 
+  it("reads the owner's amount from their message when the model leaves it out", async () => {
+    // Live again on 26 Nov: the model called supplierDues without the ₹100, and asked about ₹3,900.
+    const said = { toolCallId: "t2", messages: [{ role: "user", content: "Sharma Traders ko 100 rupaye payment kar do" }], context: {} } as never;
+    expect(await tools.supplierDues.execute!({ supplierName: "Sharma Traders" }, said)).toMatchObject({ ownerAsked: "₹100" });
+    // No amount said: the whole due.
+    const none = { toolCallId: "t3", messages: [{ role: "user", content: "Sharma Traders ko payment kar do" }], context: {} } as never;
+    const out = await tools.supplierDues.execute!({ supplierName: "Sharma Traders" }, none);
+    expect(out).not.toHaveProperty("ownerAsked");
+    expect(out).toMatchObject({ hint: expect.stringContaining("whether to pay ₹5,700") });
+  });
+
   it("makes a Cashfree payment page for a verified supplier, and stops showing the order as due", async () => {
     const out = await tools.paySupplier.execute!({ supplierName: "Sharma", amount: 4200 }, ctx);
     expect(out).toMatchObject({

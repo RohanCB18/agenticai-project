@@ -31,8 +31,27 @@ async function shop() {
   return store;
 }
 
-for (const answer of ["haan", "HAA", "Haan, pay karo."]) {
-  it.skipIf(!key)(`"${answer}" after Munshi asks to pay the supplier`, { timeout: 180_000 }, async () => {
+// The chat as it was on Telegram on 26 Nov: the earlier exchange, where Munshi had asked about the
+// whole ₹3,900, was still in the thread, and it asked the same again (the fresh chats above passed).
+const EARLIER: ModelMessage[] = [
+  { role: "user", content: "Sharma Traders ko 100 rupaye payment kar do" },
+  {
+    role: "assistant",
+    content: "Sharma Traders par 3,900 rupaye baaki hain, yeh UPI su•••@upi pe jayega. Aap 100 bol rahe hain, par poora 3,900 baaki hai. Kya poora 3,900 payment karun?",
+  },
+  { role: "user", content: "haan" },
+  { role: "assistant", content: "Sharma Traders ko 3,900 rupaye ka payment shuru ho gaya hai. Jab supplier tak pahunchega, Munshi aapko message karega." },
+];
+
+for (const [answer, history] of [
+  ["haan", []],
+  ["HAA", []],
+  ["Haan, pay karo.", []],
+  ["haan", EARLIER],
+  ["haan", EARLIER],
+  ["haan", EARLIER],
+] as [string, ModelMessage[]][]) {
+  it.skipIf(!key)(`"${answer}" after Munshi asks to pay the supplier${history.length ? " (after an earlier ₹3,900 exchange)" : ""}`, { timeout: 180_000 }, async () => {
     const store = await shop();
     const agent = () =>
       createKhataAgent({
@@ -45,7 +64,7 @@ for (const answer of ["haan", "HAA", "Haan, pay karo."]) {
         detectLanguage: (text) => detectLanguage({ apiKey: key!, text }),
       });
 
-    let messages: ModelMessage[] = [{ role: "user", content: "Sharma Traders ko 100 rupaye payment kar do" }];
+    let messages: ModelMessage[] = [...history, { role: "user", content: "Sharma Traders ko 100 rupaye payment kar do" }];
     const first = await agent().generate({ messages });
     messages = [...messages, ...first.responseMessages];
     const firstTools = first.steps.flatMap((s) => s.toolCalls.map((c) => c.toolName));

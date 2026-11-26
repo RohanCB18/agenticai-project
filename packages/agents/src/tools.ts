@@ -13,6 +13,7 @@ import {
   nothingToChart,
   salesChartSkipsUdhaar,
 } from "./charts";
+import { amountInWords, lastOwnerText } from "./amounts";
 import { paymentHabits } from "./habits";
 import { coversHsn, type GstPassage, gstCitation, type KnowledgeBase, officialHsn, officialRates, sameGoods } from "./knowledge";
 import { ownerWasAskedAboutRepeat } from "./threads";
@@ -179,7 +180,7 @@ export function payQuestionHint(askedPaise: number | null, duePaise: number) {
   }
   const asked = formatINR(askedPaise);
   const over = askedPaise > duePaise ? ` It is more than the ${formatINR(duePaise)} due: say so.` : "";
-  return `The owner asked to pay ${asked}. Say where it would go (you may mention the ${formatINR(duePaise)} due), then ask one yes-or-no question about paying ${asked}, never a different amount.${over} ${then}`;
+  return `The owner asked to pay ${asked}. Say where it would go (you may mention the ${formatINR(duePaise)} due), then ask one yes-or-no question about paying ${asked}, never a different amount: don't offer the whole due instead, even if you did before.${over} ${then}`;
 }
 
 const HSN_CODE = /^\d{4}(\s?\d{2}){0,2}$/;
@@ -926,7 +927,10 @@ export function createKhataTools(store: KhataStore, shopName = "your shop", opti
         supplierName: z.string(),
         amount: Rupees.optional().describe("The amount the owner said to pay, if they named one ('Sharma ko 100 de do' is 100). Leave out if they didn't."),
       }),
-      execute: async ({ supplierName, amount }) => {
+      execute: async ({ supplierName, amount }, { messages }) => {
+        // The owner's own amount, read from their message when the model didn't pass it: live,
+        // "Sharma Traders ko 100 rupaye payment kar do" twice got "poora 3,900 payment karun?".
+        amount ??= amountInWords(lastOwnerText(messages)) ?? undefined;
         const r = await resolveSupplier(store, supplierName);
         const name = r.ok ? r.supplier.name : supplierName;
         const orders = await store.unpaidSupplierOrders(name);
