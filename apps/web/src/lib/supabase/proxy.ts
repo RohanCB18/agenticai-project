@@ -2,8 +2,9 @@ import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 import { env } from "@/lib/env";
 
-// /.well-known: OAuth discovery for MCP hosts, read without a session.
-const PUBLIC_PATHS = ["/", "/login", "/auth", "/.well-known"];
+// /.well-known: OAuth discovery for MCP hosts, read without a session. /shop: a shop's online
+// store, where customers order without signing in.
+const PUBLIC_PATHS = ["/", "/login", "/auth", "/.well-known", "/shop"];
 
 function isPublic(pathname: string) {
   return PUBLIC_PATHS.some((p) => pathname === p || (p !== "/" && pathname.startsWith(`${p}/`)));

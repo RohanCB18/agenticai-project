@@ -1,5 +1,7 @@
 import { after } from "next/server";
 import { type CashfreeEvent, parseCashfreeEvent, verifyWebhookSignature } from "@/lib/cashfree";
+import { settleCounterLink } from "@/lib/counter";
+import { afterSaleRecorded } from "@/lib/online-shop";
 import { notifyOwnerOfPayment, settlePayment } from "@/lib/payments";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { settleSupplierLink } from "@/lib/supplier-payouts";
@@ -27,6 +29,17 @@ export async function POST(request: Request) {
   if (!event) return Response.json({ ignored: true });
 
   const db = createAdminClient();
+  // A bill paid at the counter, or an online order paid by UPI: record the sale and take its goods
+  // out of stock, tell the owner about an online order, then ask about restocking anything it took
+  // to its alert level.
+  if (event.kind === "link") {
+    const counter = await settleCounterLink(db, event.linkId, event.status, event.paidPaise);
+    if (counter) {
+      console.info(`[munshi] cashfree webhook: counter bill ${event.linkId} ${event.status}${counter.recorded ? ", recorded" : ""}`);
+      if (counter.recorded) after(() => afterSaleRecorded(db, counter.merchantId, counter.saleId));
+      return Response.json({ ok: true });
+    }
+  }
   // A link the owner pays to a supplier (Easy Split) is a supplier payment, not a customer's.
   if (event.kind === "link" && (await settleSupplierLink(db, event.linkId, event.status, event.paidPaise))) {
     console.info(`[munshi] cashfree webhook: supplier payment ${event.linkId} ${event.status}`);

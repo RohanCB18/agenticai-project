@@ -69,6 +69,10 @@ export type CreateLinkInput = {
   notes?: Record<string, string>;
   /** Easy Split: the part of the payment Cashfree settles to a vendor (a supplier) instead of the shop. */
   splits?: { vendorId: string; amountPaise: number }[];
+  /** Whether Cashfree texts the customer the link (production only). Off for a page shown at the counter. */
+  sendSms?: boolean;
+  /** Where Cashfree sends the customer after they pay (an online order's status page). */
+  returnUrl?: string;
 };
 
 export type CashfreeLink = {
@@ -97,7 +101,7 @@ export function createPaymentLink(input: CreateLinkInput): Promise<CashfreeLink>
       link_currency: "INR",
       link_purpose: input.purpose.slice(0, 500),
       customer_details: { customer_name: cashfreeName(input.customer.name), customer_phone: tenDigit(input.customer.phone) },
-      link_notify: { send_sms: cashfreeSendsSms(), send_email: false },
+      link_notify: { send_sms: (input.sendSms ?? true) && cashfreeSendsSms(), send_email: false },
       link_expiry_time: input.expiresAt.toISOString(),
       // Customers go straight to UPI (the app on a phone, a QR on a computer). In the sandbox, that
       // QR is one no real app can pay, so a tester also gets net banking, whose test bank can approve
@@ -106,6 +110,7 @@ export function createPaymentLink(input: CreateLinkInput): Promise<CashfreeLink>
         upi_intent: isProduction(),
         payment_methods: isProduction() ? "upi" : "upi,nb",
         ...(input.notifyUrl ? { notify_url: input.notifyUrl } : {}),
+        ...(input.returnUrl ? { return_url: input.returnUrl } : {}),
       },
       link_notes: input.notes,
       ...(input.splits?.length ? { order_splits: input.splits.map((s) => ({ vendor_id: s.vendorId, amount: s.amountPaise / 100 })) } : {}),

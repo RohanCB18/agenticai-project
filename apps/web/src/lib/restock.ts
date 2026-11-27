@@ -23,7 +23,8 @@ import { configuredSupplier } from "@/lib/supplier";
 // owner set, Munshi asks once on their chat app with the wholesaler's signed quote; one "haan"
 // places exactly that order and pays the supplier from the shop's Cashfree balance (Payouts), or,
 // when the balance can't, sends a Cashfree page to pay (Easy Split). Asked again for the same
-// product only after 3 days, so a low item doesn't nag after every message.
+// product only after 3 days, so a low item doesn't nag after every message, or sooner once stock
+// has come in for it and it runs low again.
 //
 // Each ask is a row in `approvals` (action purchase_order, payload.kind "restock"): pending until
 // the owner taps, then executed, rejected, failed or expired, like the other approvals.
@@ -170,19 +171,34 @@ export async function answerRestock({ store, book, supplier, now = new Date() }:
 
 // ---------------------------------------------------------------- the database and chat apps
 
+/**
+ * The products a recent ask still covers. Stock coming in after the ask (a supplier's bill, a
+ * delivery) ends it: an item restocked and then low again the same week is asked about again.
+ */
+export function stillAsked(asks: { productIds: string[]; at: string }[], stockIns: { productId: string; at: string }[]): Set<string> {
+  const lastAsk = new Map<string, number>();
+  for (const ask of asks) for (const id of ask.productIds) lastAsk.set(id, Math.max(lastAsk.get(id) ?? 0, Date.parse(ask.at)));
+  for (const stockIn of stockIns) {
+    const asked = lastAsk.get(stockIn.productId);
+    if (asked !== undefined && Date.parse(stockIn.at) > asked) lastAsk.delete(stockIn.productId);
+  }
+  return new Set(lastAsk.keys());
+}
+
 export function supabaseRestockBook(admin: SupabaseClient, merchantId: string): RestockBook {
-  const rows = () => admin.from("approvals").select("id, payload, expires_at").eq("merchant_id", merchantId).eq("action", "purchase_order");
-  type Row = { id: string; payload: { kind?: string; productIds?: string[]; quoteId?: string | null; quoteExpired?: boolean } | null; expires_at: string };
+  const rows = () => admin.from("approvals").select("id, payload, expires_at, created_at").eq("merchant_id", merchantId).eq("action", "purchase_order");
+  type Row = { id: string; payload: { kind?: string; productIds?: string[]; quoteId?: string | null; quoteExpired?: boolean } | null; expires_at: string; created_at: string };
   return {
     async askedSince(since) {
-      const { data, error } = await rows().gte("created_at", since.toISOString());
+      const [{ data, error }, { data: stockIns }] = await Promise.all([
+        rows().gte("created_at", since.toISOString()),
+        admin.from("stock_movements").select("product_id, created_at").eq("merchant_id", merchantId).gt("delta", 0).gte("created_at", since.toISOString()),
+      ]);
       if (error) throw new Error(`Read restock asks failed: ${error.message}`);
-      const asked = new Set<string>();
-      for (const row of (data ?? []) as Row[]) {
-        if (row.payload?.kind !== "restock" || row.payload.quoteExpired) continue;
-        for (const id of row.payload.productIds ?? []) asked.add(id);
-      }
-      return asked;
+      const asks = ((data ?? []) as Row[])
+        .filter((row) => row.payload?.kind === "restock" && !row.payload.quoteExpired)
+        .map((row) => ({ productIds: row.payload?.productIds ?? [], at: row.created_at }));
+      return stillAsked(asks, ((stockIns ?? []) as { product_id: string; created_at: string }[]).map((m) => ({ productId: m.product_id, at: m.created_at })));
     },
     async open({ productIds, quoteId, totalPaise, summary, expiresAt, offered }) {
       const { data, error } = await admin
