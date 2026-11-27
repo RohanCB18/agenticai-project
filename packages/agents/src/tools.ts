@@ -491,7 +491,7 @@ export function createKhataTools(store: KhataStore, shopName = "your shop", opti
           products: products.map((p) => ({
             name: p.name,
             stock: `${p.stockQty} ${p.unit}`,
-            reorderAt: p.reorderLevel === null ? null : `${p.reorderLevel} ${p.unit}`,
+            reorderAt: p.reorderLevel === null ? null : `${p.reorderLevel} ${p.unit}${p.alertIsDefault ? " (Munshi's default)" : ""}`,
             low: p.reorderLevel !== null && p.stockQty <= p.reorderLevel,
             // The product's GST tag, when it has one ("not tagged" otherwise: setProductGst sets it).
             gst: p.hsn ? { hsn: p.hsn, rate: p.gstRate == null ? "not chosen yet" : `${p.gstRate}%` } : "not tagged",
@@ -551,14 +551,14 @@ export function createKhataTools(store: KhataStore, shopName = "your shop", opti
 
     setReorderLevel: tool({
       description:
-        "Set the stock level at which a product counts as running low, e.g. 'Rice 10 kg pe alert karna' is 10. Use 0 to remove the alert. Low products show in getStock and are what askSupplierQuote restocks.",
-      inputSchema: z.object({ productName: z.string(), level: z.number().min(0).describe("In the product's own unit; 0 removes the alert") }),
+        "Set the stock level at which a product counts as running low, e.g. 'Rice 10 kg pe alert karna' is 10. Every product already has Munshi's default by its unit (10 kg, 5 ltr, 10 packets, 2 boxes) until the owner sets one; 0 means only when it runs out. Selling down to it makes Munshi ask about restocking on its own; low products show in getStock and are what askSupplierQuote restocks.",
+      inputSchema: z.object({ productName: z.string(), level: z.number().min(0).describe("In the product's own unit; 0 means alert only when it runs out") }),
       execute: async ({ productName, level }) => {
         const matches = rankProducts(productName, await store.listProducts());
         const [match] = matches;
         if (!match) return { status: "product_not_found", productName };
         if (tooClose(matches)) return { status: "ambiguous_product", candidates: matches.slice(0, 3).map((m) => m.item.name), hint: "Ask the owner which product." };
-        const product = await store.setReorderLevel(match.item.id, level > 0 ? level : null);
+        const product = await store.setReorderLevel(match.item.id, level);
         return {
           status: "alert_set",
           product: product.name,

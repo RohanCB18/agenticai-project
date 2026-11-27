@@ -11,7 +11,10 @@ export type Product = {
   aliases: string[];
   unit: string;
   stockQty: number;
+  /** The stock level that triggers a restock ask: the owner's, or Munshi's default for the unit. */
   reorderLevel: number | null;
+  /** True when reorderLevel is Munshi's default, not one the owner set. */
+  alertIsDefault?: boolean;
   pricePaise: number | null;
   /** HSN code, digits only, and the official GST rate with the entry it comes from. Null until tagged. */
   hsn?: string | null;

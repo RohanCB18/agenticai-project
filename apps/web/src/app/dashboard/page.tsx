@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { connection } from "next/server";
 import { Suspense } from "react";
+import { defaultAlertLevel } from "@munshi/agents";
 import { formatINR } from "@munshi/db";
 import { getCurrentMerchant } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
@@ -40,7 +41,8 @@ async function Books() {
   };
 
   const totalUdhaar = (balances ?? []).reduce((sum, b) => sum + Number(b.outstanding_paise), 0);
-  const reorder = (lowStock ?? []).filter((p) => p.reorder_level !== null && Number(p.stock_qty) <= Number(p.reorder_level));
+  // The owner's alert level, or Munshi's default for the unit: the same as the restock asks.
+  const reorder = (lowStock ?? []).filter((p) => Number(p.stock_qty) <= Number(p.reorder_level ?? defaultAlertLevel(p.unit)));
 
   return (
     <>

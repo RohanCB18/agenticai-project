@@ -100,7 +100,7 @@ describe("askSupplierQuote", () => {
 });
 
 describe("setReorderLevel", () => {
-  it("sets the alert that getStock and restocking use, and 0 removes it", async () => {
+  it("sets the alert that getStock and restocking use, and 0 means only when it runs out", async () => {
     expect(await tools.setReorderLevel.execute!({ productName: "chawal", level: 60 }, ctx())).toEqual({
       status: "alert_set",
       product: "Rice",
@@ -111,7 +111,8 @@ describe("setReorderLevel", () => {
     expect(await tools.getStock.execute!({ lowOnly: true }, ctx())).toMatchObject({ products: [{ name: "Rice" }, { name: "Sugar" }] });
     await tools.askSupplierQuote.execute!({}, ctx());
     expect(supplier.asked[0]).toContainEqual({ name: "Rice", quantity: 70, unit: "kg" }); // up to twice the alert level
-    expect(await tools.setReorderLevel.execute!({ productName: "Rice", level: 0 }, ctx())).toMatchObject({ status: "alert_set", alertAt: null });
+    // Every product has a level now (Munshi's default when the owner never set one), so 0 is a level too.
+    expect(await tools.setReorderLevel.execute!({ productName: "Rice", level: 0 }, ctx())).toMatchObject({ status: "alert_set", alertAt: "0 kg", low: false });
     expect(receiptLines([{ tool: "setReorderLevel", output: { status: "alert_set", product: "Sugar", alertAt: "5 kg", stock: "3 kg" } }])).toEqual(["🧾 Alert: Sugar at 5 kg (now 3 kg)"]);
   });
 });

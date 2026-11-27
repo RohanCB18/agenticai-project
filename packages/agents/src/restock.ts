@@ -1,13 +1,50 @@
 import type { Product } from "./store";
 import { type QuoteRequestItem, quoteLines, type SupplierOrder, type SupplierQuote } from "./supplier";
 
-// Restocking on Munshi's own initiative. When something falls to the alert level the owner set
-// ("Rice 10 kg pe alert karna"), Munshi asks once, with the wholesaler's signed quote, and one
-// "haan" orders exactly that quote and pays the supplier from the shop's Cashfree balance (or, when
-// the balance can't, sends a page to pay). Plain code decides what is low and how much to order;
-// the wholesaler decides the price.
+// Restocking on Munshi's own initiative. When a sale takes something to its alert level, Munshi
+// asks once, with the wholesaler's signed quote, and one "haan" (tapped, typed or said) orders
+// exactly that quote and pays the supplier from the shop's Cashfree balance (or, when the balance
+// can't, sends a page to pay). Plain code decides what is low and how much to order; the
+// wholesaler decides the price.
 
-/** Products at or below the alert level the owner set. A product with no alert is never low. */
+// Every product has an alert level from the start, so the owner never has to ask for one: by its
+// unit, roughly what a kirana sells in a few days, so there is time for the wholesaler's next
+// delivery. The owner changes any of them in chat ("Rice 20 kg pe alert karna").
+const DEFAULT_ALERT: [RegExp, number][] = [
+  [/^(kg|kgs|kilo|kilos|kilogram|kilograms)$/, 10],
+  [/^(g|gm|gms|gram|grams)$/, 1000],
+  [/^(l|lt|ltr|ltrs|litre|litres|liter|liters)$/, 5],
+  [/^ml$/, 1000],
+  [/^(box|boxes|carton|cartons|case|cases|bag|bags|sack|sacks|dozen|dozens|dz)$/, 2],
+  [/^(bottle|bottles|can|cans|tin|tins|jar|jars)$/, 6],
+  [/^(pkt|pkts|packet|packets|pack|packs|pcs|pc|piece|pieces|nos|unit|units)$/, 10],
+];
+
+/** The alert level of a product the owner hasn't set one for: 10 kg, 5 ltr, 10 packets, 2 boxes... */
+export function defaultAlertLevel(unit: string) {
+  const u = unit.trim().toLowerCase().replace(/\.$/, "");
+  return DEFAULT_ALERT.find(([pattern]) => pattern.test(u))?.[1] ?? 5;
+}
+
+// A plain yes or no to a restock ask, typed or said ("haan", "ಹೌದು", "नहीं"). Anything longer
+// ("haan, 2 bag aur") goes to the agent like any message.
+const YES = new Set([
+  "haan", "haa", "ha", "han", "haan ji", "haanji", "hanji", "ji haan", "haan haan", "yes", "yeah", "yep", "ok", "okay", "ok ji",
+  "theek hai", "thik hai", "kar do", "order karo", "order kar do", "haan karo", "haan kar do", "haan order karo", "haan order kar do",
+  "bilkul", "sure", "houdu", "haudu", "sari", "aytu", "ಹೌದು", "ಸರಿ", "ಆಯ್ತು", "हाँ", "हां", "हा", "जी हाँ", "जी हां", "हाँ जी", "हां जी",
+  "ठीक है", "कर दो", "ऑर्डर करो", "ऑर्डर कर दो",
+]);
+const NO = new Set(["nahi", "nahin", "na", "no", "nope", "mat karo", "rehne do", "nahi chahiye", "abhi nahi", "beda", "illa", "ಬೇಡ", "ಇಲ್ಲ", "नहीं", "ना", "मत करो", "रहने दो", "अभी नहीं"]);
+
+/** True for a plain "haan", false for a plain "nahi", null for anything else. */
+export function plainYesNo(text: string): boolean | null {
+  const said = text.normalize("NFC").toLowerCase().replace(/[\p{P}\p{S}]/gu, " ").replace(/\s+/g, " ").trim();
+  if (YES.has(said)) return true;
+  if (NO.has(said)) return false;
+  return null;
+}
+
+/** Products at or below their alert level (the owner's, or Munshi's default). A product with no level at all is never low. */
 export function lowProducts(products: Product[]) {
   return products.filter((p) => p.reorderLevel !== null && p.stockQty <= p.reorderLevel);
 }
@@ -30,7 +67,8 @@ export type RestockPayee = { to: string; fromBalance: boolean };
  * minimum. `pay` is set when the owner added the supplier's account.
  */
 export function restockAlert(low: Product[], quote: SupplierQuote | null, pay: RestockPayee | null, problem?: string): { text: string; canOrder: boolean } {
-  const head = `📦 Running low: ${low.map((p) => `${p.name} ${amountOf(p.stockQty, p.unit)} left${p.reorderLevel === null ? "" : ` (alert at ${amountOf(p.reorderLevel, p.unit)})`}`).join(", ")}.`;
+  const alertAt = (p: Product) => (p.reorderLevel === null ? "" : ` (alert at ${amountOf(p.reorderLevel, p.unit)}${p.alertIsDefault ? ", Munshi's default" : ""})`);
+  const head = `📦 Running low: ${low.map((p) => `${p.name} ${amountOf(p.stockQty, p.unit)} left${alertAt(p)}`).join(", ")}.`;
   if (!quote) return { text: `${head}\n\n${problem ?? "No wholesaler is connected to Munshi to order from."}`, canOrder: false };
 
   const cant = quote.unavailable.length ? `Can't supply: ${quote.unavailable.map((u) => `${u.requested} (${u.reason})`).join(", ")}.` : null;

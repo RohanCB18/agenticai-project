@@ -270,7 +270,27 @@ export async function alertLowStock(admin: SupabaseClient, merchantId: string) {
   }
 }
 
-/** The owner tapped Haan or Nahi on a restock ask. */
+/**
+ * The restock ask a plain typed or spoken "haan" or "nahi" answers: the newest one still waiting,
+ * if Munshi sent it after the chat's last reply (else the owner is answering that reply instead).
+ * Its id with the prefix, as a tap would send it, or null.
+ */
+export async function pendingRestockAsk(admin: SupabaseClient, merchantId: string, after: Date | null): Promise<string | null> {
+  let query = admin
+    .from("approvals")
+    .select("id, payload")
+    .eq("merchant_id", merchantId)
+    .eq("action", "purchase_order")
+    .eq("status", "pending")
+    .gt("expires_at", new Date().toISOString());
+  if (after) query = query.gt("created_at", after.toISOString());
+  const { data, error } = await query.order("created_at", { ascending: false }).limit(5);
+  if (error) throw new Error(`Read restock asks failed: ${error.message}`);
+  const ask = ((data ?? []) as { id: string; payload: { kind?: string } | null }[]).find((row) => row.payload?.kind === "restock");
+  return ask ? `${RESTOCK_APPROVAL_PREFIX}${ask.id}` : null;
+}
+
+/** The owner tapped Haan or Nahi on a restock ask, or said it. */
 export function decideRestock(admin: SupabaseClient, merchantId: string, approvalId: string, approved: boolean) {
   return answerRestock({ store: storeFor(admin, merchantId), book: supabaseRestockBook(admin, merchantId), supplier: configuredSupplier() }, approvalId, approved);
 }

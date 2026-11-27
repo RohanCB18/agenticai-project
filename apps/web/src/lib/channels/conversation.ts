@@ -4,7 +4,9 @@ import {
   askedAboutRepeat,
   claimsUnbackedAction,
   EMPTY_REPLY_NOTE,
+  endsWithQuestion,
   NOT_RECORDED,
+  plainYesNo,
   closePendingApprovals,
   completedActions,
   NOTHING_SAVED,
@@ -28,7 +30,7 @@ import { buildKhataAgent } from "@/lib/agent";
 import { BILL_APPROVAL_PREFIX, decideBill, handleBillPhoto } from "@/lib/bills";
 import { answerReminders, startReminders } from "@/lib/reminder-runs";
 import { paymentNote, whatsappButton } from "@/lib/reminders";
-import { alertLowStock, decideRestock, RESTOCK_APPROVAL_PREFIX } from "@/lib/restock";
+import { alertLowStock, decideRestock, pendingRestockAsk, RESTOCK_APPROVAL_PREFIX } from "@/lib/restock";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { payoutsConfigured } from "@/lib/cashfree-payouts";
 import { reconcilePayouts, watchPayouts } from "@/lib/supplier-payouts";
@@ -98,23 +100,25 @@ export async function handleInbound(inbound: Inbound, sender: ChannelSender) {
     if (inbound.approved) await sender.showWorking?.(chatId, "typing");
     return;
   }
-  // A restock ask Munshi sent when stock ran low: "haan" orders that exact quote and sends the
-  // page to pay the supplier, in code, with no model in between.
-  if (inbound.kind === "decision" && inbound.approvalId.startsWith(RESTOCK_APPROVAL_PREFIX)) {
-    await inbound.acknowledge?.(inbound.approved ? "approved" : "denied");
-    if (inbound.approved) await sender.showWorking?.(chatId, "typing");
-    const answer = await decideRestock(admin, merchant.id, inbound.approvalId, inbound.approved);
+  // A restock ask Munshi sent when stock ran low: "haan" orders that exact quote and pays the
+  // supplier, in code, with no model in between. A tap, or (below) a typed or spoken "haan".
+  const answerRestockAsk = async (approvalId: string, approved: boolean) => {
+    if (approved) await sender.showWorking?.(chatId, "typing");
+    const answer = await decideRestock(admin, merchant.id, approvalId, approved);
     await sender.sendText(chatId, answer.text, answer.buttons);
     if (answer.askAgain) await alertLowStock(admin, merchant.id);
     if (answer.paying) await watchPayouts(admin, merchant.id, { forMs: watchTime(startedAt) }).catch(logWatchError);
-    return;
+  };
+  if (inbound.kind === "decision" && inbound.approvalId.startsWith(RESTOCK_APPROVAL_PREFIX)) {
+    await inbound.acknowledge?.(inbound.approved ? "approved" : "denied");
+    return answerRestockAsk(inbound.approvalId, inbound.approved);
   }
 
   // Supplier payment pages still waiting: ask Cashfree, in case its webhook never came. The owner
   // hears how one ended before the answer to whatever they asked.
   await reconcilePayouts(admin, merchant.id).catch((error: unknown) => console.error("[munshi] payout check failed:", error instanceof Error ? error.message : error));
 
-  const { data: thread } = await admin.from("agent_threads").select("messages").eq("merchant_id", merchant.id).eq("channel", channel).maybeSingle();
+  const { data: thread } = await admin.from("agent_threads").select("messages, updated_at").eq("merchant_id", merchant.id).eq("channel", channel).maybeSingle();
   let messages = (thread?.messages ?? []) as ModelMessage[];
   let ownerText = ""; // what the owner said this turn, if they said anything
   let replyLanguage: string | null = null; // set for voice notes: Munshi answers by voice too
@@ -146,6 +150,20 @@ export async function handleInbound(inbound: Inbound, sender: ChannelSender) {
       return sender.sendText(chatId, `I understand texts, voice notes and photos of bills. ${HELP}`);
     }
     if (!text) return;
+    // A plain "haan" or "nahi", typed or said, right after a restock ask answers that ask, like its
+    // buttons. Only when the ask came after Munshi's last reply and that reply asked nothing:
+    // otherwise the owner may be answering the reply (the ask's buttons still work).
+    const said = plainYesNo(text);
+    if (said !== null && !endsWithQuestion(lastReplyText(messages))) {
+      const ask = await pendingRestockAsk(admin, merchant.id, thread?.updated_at ? new Date(thread.updated_at as string) : null).catch((error: unknown) => {
+        console.error("[munshi] restock ask lookup failed:", error instanceof Error ? error.message : error);
+        return null;
+      });
+      if (ask) {
+        console.info(`[munshi] "${text}" answers restock ask ${ask}`);
+        return answerRestockAsk(ask, said);
+      }
+    }
     ownerText = text;
     messages = [...closePendingApprovals(messages), { role: "user", content: text }];
   }
@@ -268,6 +286,18 @@ export async function handleInbound(inbound: Inbound, sender: ChannelSender) {
   if (toolOutputs(responseMessages, "paySupplier").some((o) => (o as { status?: string }).status === "payout_started")) {
     await watchPayouts(admin, merchant.id, { forMs: watchTime(startedAt) }).catch(logWatchError);
   }
+}
+
+/** The words of Munshi's last reply in the thread ("" if there is none). */
+function lastReplyText(messages: ModelMessage[]) {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const message = messages[i]!;
+    if (message.role === "user") return "";
+    if (message.role !== "assistant") continue;
+    const words = typeof message.content === "string" ? message.content : message.content.map((part) => (part.type === "text" ? part.text : "")).join(" ");
+    if (words.trim()) return words.trim();
+  }
+  return "";
 }
 
 /** What is left of the webhook function's 60 s for watching a payment, with a margin. */

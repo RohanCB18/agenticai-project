@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { lowProducts, restockAlert, restockItems, restockOrdered } from "./restock";
+import { defaultAlertLevel, lowProducts, plainYesNo, restockAlert, restockItems, restockOrdered } from "./restock";
 import type { Product } from "./store";
 import type { SupplierOrder, SupplierQuote } from "./supplier";
 
@@ -47,6 +47,37 @@ describe("what is low, and how much to order", () => {
       { name: "Rice", quantity: 12, unit: "kg" },
       { name: "Toor Dal", quantity: 5, unit: "kg" },
     ]);
+  });
+});
+
+describe("alert levels nobody set", () => {
+  it("gives every product a level by its unit", () => {
+    expect(defaultAlertLevel("kg")).toBe(10);
+    expect(defaultAlertLevel(" KG ")).toBe(10);
+    expect(defaultAlertLevel("ltr")).toBe(5);
+    expect(defaultAlertLevel("litre")).toBe(5);
+    expect(defaultAlertLevel("packet")).toBe(10);
+    expect(defaultAlertLevel("pkt.")).toBe(10);
+    expect(defaultAlertLevel("box")).toBe(2);
+    expect(defaultAlertLevel("bottle")).toBe(6);
+    expect(defaultAlertLevel("g")).toBe(1000);
+    expect(defaultAlertLevel("crate")).toBe(5); // a unit Munshi doesn't know
+  });
+
+  it("says when the level is Munshi's default, so the owner knows they can change it", () => {
+    const parle: Product = { ...product("Parle G", 2, 2, "box"), alertIsDefault: true };
+    expect(restockAlert([parle], quote(), null).text).toContain("Parle G 2 box left (alert at 2 box, Munshi's default)");
+  });
+});
+
+describe("a typed or spoken answer to the ask", () => {
+  it("takes a plain haan or nahi, in Hindi, Kannada or English, with any punctuation", () => {
+    for (const yes of ["haan", "Haan.", "haan ji", "Ha!", "हाँ।", "हां जी", "ಹೌದು", "houdu", "ok", "Yes", "order kar do", "👍 haan"]) expect(plainYesNo(yes)).toBe(true);
+    for (const no of ["nahi", "Nahin.", "no", "नहीं", "ಬೇಡ", "illa", "abhi nahi"]) expect(plainYesNo(no)).toBe(false);
+  });
+
+  it("leaves anything more to the agent", () => {
+    for (const other of ["haan, 2 bag aur", "Ramesh ne 200 diye", "kitna hai?", "", "haan nahi"]) expect(plainYesNo(other)).toBeNull();
   });
 });
 

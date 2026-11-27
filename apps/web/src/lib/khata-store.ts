@@ -1,5 +1,5 @@
 import "server-only";
-import type { Balance, Customer, KhataStore, LedgerEntry, PaymentLink, Product, Supplier, SupplierPayout } from "@munshi/agents";
+import { type Balance, type Customer, defaultAlertLevel, type KhataStore, type LedgerEntry, type PaymentLink, type Product, type Supplier, type SupplierPayout } from "@munshi/agents";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { cashfreeSendsSms, createPaymentLink as createCashfreeLink, createUpiQr } from "@/lib/cashfree";
 import { cancelOpenRequests, reconcilePayments } from "@/lib/payments";
@@ -42,18 +42,24 @@ const toEntry = (r: EntryRow): LedgerEntry => ({
   ...(r.source ? { source: r.source } : {}),
 });
 
-const toProduct = (r: ProductRow): Product => ({
-  id: r.id,
-  name: r.name,
-  aliases: r.aliases,
-  unit: r.unit,
-  stockQty: Number(r.stock_qty),
-  reorderLevel: r.reorder_level === null ? null : Number(r.reorder_level),
-  pricePaise: r.price_paise,
-  hsn: r.hsn,
-  gstRate: r.gst_rate === null ? null : Number(r.gst_rate),
-  gstCitation: r.gst_citation,
-});
+// A product the owner never set an alert for gets Munshi's default for its unit (10 kg, 5 ltr,
+// 10 packets...), so selling it down to there asks about restocking without being told to.
+const toProduct = (r: ProductRow): Product => {
+  const set = r.reorder_level === null ? null : Number(r.reorder_level);
+  return {
+    id: r.id,
+    name: r.name,
+    aliases: r.aliases,
+    unit: r.unit,
+    stockQty: Number(r.stock_qty),
+    reorderLevel: set ?? defaultAlertLevel(r.unit),
+    alertIsDefault: set === null,
+    pricePaise: r.price_paise,
+    hsn: r.hsn,
+    gstRate: r.gst_rate === null ? null : Number(r.gst_rate),
+    gstCitation: r.gst_citation,
+  };
+};
 
 /**
  * KhataStore backed by Supabase. In the web app `db` is the signed-in user's client, so RLS
