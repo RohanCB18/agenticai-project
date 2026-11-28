@@ -19,7 +19,12 @@ def test_health():
 def test_agent_card_advertises_its_skills_over_json_rpc():
     card = client.get("/.well-known/agent-card.json").json()
     assert card["name"] == "Sharma Traders Wholesale Agent"
-    assert [skill["id"] for skill in card["skills"]] == ["quote_reorder", "place_order", "delivery_status"]
+    assert [skill["id"] for skill in card["skills"]] == [
+        "quote_reorder",
+        "place_order",
+        "ask_the_desk",
+        "delivery_status",
+    ]
     assert card["supportedInterfaces"][0]["protocolBinding"] == "JSONRPC"
     assert card["supportedInterfaces"][0]["url"].endswith("/a2a")
 

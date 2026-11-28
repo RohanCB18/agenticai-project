@@ -863,6 +863,39 @@ export function createKhataTools(store: KhataStore, shopName = "your shop", opti
       },
     }),
 
+    askWholesaler: tool({
+      description:
+        "Ask the wholesaler's order desk something in words, for the owner: whether they have an item, a substitute for something out of stock, what to add to reach their minimum order, when an order will come. Pass the owner's question as it would be put to the wholesaler, in the owner's language. For a plain quote of items, use askSupplierQuote.",
+      inputSchema: z.object({ question: z.string().min(2).max(500).describe('e.g. "Basmati rice hai kya?", "Ghee kab tak aayega?"') }),
+      execute: async ({ question }) => {
+        if (!supplier) return NO_SUPPLIER;
+        if (!supplier.ask) return { status: "not_supported", hint: "This wholesaler only takes quotes and orders: use askSupplierQuote." };
+        try {
+          const { answer, quote } = await supplier.ask(question, shopName);
+          const quoted = quote?.quoteId
+            ? {
+                lines: quote.lines.map((l) => ({ item: l.item, quantity: `${l.quantity} ${l.unit}`, amount: l.amount })),
+                total: quote.total,
+                deliverySlot: quote.deliverySlot,
+                ...(quote.meetsMinimum ? {} : { belowMinimum: `${quote.supplier} takes orders from ${quote.minimumOrder}` }),
+                quoteId: quote.quoteId,
+              }
+            : {};
+          return {
+            status: quote?.quoteId ? "quoted" : "answered",
+            supplier: supplier.name,
+            answer,
+            ...quoted,
+            hint: quote?.quoteId
+              ? "Tell the owner what the wholesaler said and its quote, and ask whether to order. Only if they say yes, call placeSupplierOrder."
+              : "Tell the owner what the wholesaler said, in your words. Never add a price or date it didn't give.",
+          };
+        } catch (error) {
+          return supplierDown(supplier.name, error);
+        }
+      },
+    }),
+
     placeSupplierOrder: tool({
       description:
         "Order the latest quote from the wholesaler, after the owner said yes to it. The owner also approves it with a button before it is sent.",

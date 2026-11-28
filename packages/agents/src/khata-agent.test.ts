@@ -345,6 +345,7 @@ describe("specialist desks", () => {
     expect(seen[0]?.tools).toEqual([
       "addProduct",
       "askSupplierQuote",
+      "askWholesaler",
       "checkGstPortal",
       "forget",
       "getStock",

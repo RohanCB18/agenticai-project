@@ -3,11 +3,15 @@
     understand --> quote    --> END
                |-> order    --> END
                |-> delivery --> END
+               |-> talk     --> END   (Sarvam, with the desk's tools)
                `-> help     --> END
 
-`understand` reads either a structured request (an A2A data part, which is what Munshi sends) or
-plain text from any other agent ("10 kg rice, 48 maggi"). Pricing and orders are plain code in
-pricing.py, so a request phrased cleverly can't talk the agent into a different price.
+`understand` reads either a structured request (an A2A data part, which is what Munshi sends for
+quotes, orders and deliveries) or words from any agent ("basmati hai kya?", "10 kg rice, 48
+maggi"). Structured requests go straight to plain code. Words go to the order desk in
+assistant.py, where Sarvam answers using the same code as tools; without a Sarvam key, a list of
+goods is still quoted. Pricing and orders are plain code in pricing.py either way, so a request
+phrased cleverly can't talk the agent into a different price.
 """
 
 from __future__ import annotations
@@ -17,9 +21,10 @@ from typing import Any, Literal, TypedDict
 
 from langgraph.graph import END, START, StateGraph
 
-from munshi_distributor.pricing import OrderError, delivery_status, place_order, quote
+from munshi_distributor.assistant import converse, sarvam_key
+from munshi_distributor.pricing import SUPPLIER, OrderError, delivery_status, place_order, quote
 
-Action = Literal["quote", "order", "delivery", "help"]
+Action = Literal["quote", "order", "delivery", "talk", "help"]
 
 
 class WholesalerState(TypedDict, total=False):
@@ -71,10 +76,16 @@ def understand(state: WholesalerState) -> WholesalerState:
     ):
         found = JWT.search(text)
         return {"action": "order", "quote_id": data.get("quoteId") or (found.group(0) if found else None)}
-    items = data.get("items") if action == "quote" else parse_items(text)
+    shop = data.get("shop")
+    shop_name = shop.get("name") if isinstance(shop, dict) else None
+    if action == "quote" and data.get("items"):
+        return {"action": "quote", "items": list(data["items"]), "shop": shop_name}
+    words = str(data.get("message") or "").strip() if action == "chat" else ("" if action else text)
+    if words and sarvam_key():
+        return {"action": "talk", "text": words, "shop": shop_name}
+    items = parse_items(words)
     if items:
-        shop = data.get("shop")
-        return {"action": "quote", "items": list(items), "shop": shop.get("name") if isinstance(shop, dict) else None}
+        return {"action": "quote", "items": items, "shop": shop_name}
     return {"action": "help"}
 
 
@@ -134,6 +145,28 @@ def check_delivery(state: WholesalerState) -> WholesalerState:
     return {"reply": status, "summary": summary}
 
 
+def talk(state: WholesalerState) -> WholesalerState:
+    """The order desk answers in words, with any quote it made as data."""
+    text, shop = state.get("text") or "", state.get("shop")
+    try:
+        answer = converse(text, shop, sarvam_key() or "")
+    except Exception as error:  # Sarvam down or slow: a list of goods still gets its quote
+        print(f"[wholesaler] desk couldn't answer: {error}")
+        items = parse_items(text)
+        if items:
+            return make_quote({"items": items, "shop": shop})
+        reply = {
+            "type": "reply",
+            "supplier": SUPPLIER,
+            "message": "Our order desk can't answer just now. Send the items and quantities for a quote.",
+        }
+        return {"reply": reply, "summary": reply["message"]}
+    reply = {"type": "reply", "supplier": SUPPLIER, "message": answer["message"]}
+    if answer.get("quote"):
+        reply["quote"] = answer["quote"]
+    return {"reply": reply, "summary": answer["message"]}
+
+
 def explain(state: WholesalerState) -> WholesalerState:
     message = (
         'Send items to quote, e.g. {"action": "quote", "items": [{"name": "rice", "quantity": 25}]} '
@@ -152,12 +185,15 @@ def build_graph():
     graph.add_node("quote", make_quote)
     graph.add_node("order", make_order)
     graph.add_node("delivery", check_delivery)
+    graph.add_node("talk", talk)
     graph.add_node("help", explain)
     graph.add_edge(START, "understand")
     graph.add_conditional_edges(
-        "understand", _route, {"quote": "quote", "order": "order", "delivery": "delivery", "help": "help"}
+        "understand",
+        _route,
+        {"quote": "quote", "order": "order", "delivery": "delivery", "talk": "talk", "help": "help"},
     )
-    for node in ("quote", "order", "delivery", "help"):
+    for node in ("quote", "order", "delivery", "talk", "help"):
         graph.add_edge(node, END)
     return graph.compile()
 

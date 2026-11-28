@@ -1,7 +1,7 @@
 import type { LanguageModelV4GenerateResult } from "@ai-sdk/provider";
 import type { ModelMessage } from "ai";
 import { MockLanguageModelV4 } from "ai/test";
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createKhataAgent } from "./khata-agent";
 import { receiptLines } from "./receipts";
 import { latestQuoteId, type QuoteRequestItem, quoteLines, readQuote, SupplierError, type SupplierAgent, type SupplierQuote } from "./supplier";
@@ -181,5 +181,55 @@ describe("quotes in the conversation", () => {
     expect(receiptLines([{ tool: "placeSupplierOrder", output: { status: "ordered", orderId: "ST-1", supplier: "Sharma Traders", total: "₹1,300", deliverySlot: "Sat" } }])).toEqual([
       "🚚 Order ST-1 to Sharma Traders: ₹1,300 · delivery Sat",
     ]);
+  });
+});
+
+
+describe("askWholesaler", () => {
+  /** A wholesaler whose order desk answers in words, and sometimes with a quote. */
+  class TalkingSupplier extends FakeSupplier {
+    questions: string[] = [];
+    withQuote = false;
+    async ask(question: string) {
+      this.questions.push(question);
+      const answer = this.withQuote ? "Minimum ke liye 25 kg chawal add kiya: total ₹1,300." : "Ghee abhi out of stock hai, agle hafte poochiye.";
+      return { answer, quote: this.withQuote ? await this.quote([]) : undefined };
+    }
+  }
+
+  it("passes the owner's question to the wholesaler's desk and brings back its answer", async () => {
+    const supplier = new TalkingSupplier();
+    const tools = createKhataTools(new MemoryStore(), "RCB general stores", { supplier });
+    const out = await tools.askWholesaler.execute!({ question: "Ghee kab tak aayega?" }, ctx());
+    expect(supplier.questions).toEqual(["Ghee kab tak aayega?"]);
+    expect(out).toMatchObject({ status: "answered", supplier: "Sharma Traders", answer: "Ghee abhi out of stock hai, agle hafte poochiye." });
+    expect(out).not.toHaveProperty("quoteId");
+  });
+
+  it("a quote the desk made can be ordered, after the owner's yes", async () => {
+    const supplier = new TalkingSupplier();
+    supplier.withQuote = true;
+    const tools = createKhataTools(new MemoryStore(), "RCB general stores", { supplier });
+    const out = await tools.askWholesaler.execute!({ question: "Minimum ke liye kya add karun?" }, ctx());
+    expect(out).toMatchObject({ status: "quoted", total: "₹1,300", quoteId: QUOTE_ID });
+    const messages: ModelMessage[] = [
+      { role: "assistant", content: [{ type: "tool-call", toolCallId: "w1", toolName: "askWholesaler", input: {} }] },
+      { role: "tool", content: [{ type: "tool-result", toolCallId: "w1", toolName: "askWholesaler", output: { type: "json", value: out as never } }] },
+    ];
+    expect(latestQuoteId(messages)).toBe(QUOTE_ID);
+  });
+
+  it("says so when the wholesaler only takes quotes and orders, or is down", async () => {
+    const tools = createKhataTools(new MemoryStore(), "RCB", { supplier: new FakeSupplier() });
+    expect(await tools.askWholesaler.execute!({ question: "Ghee hai?" }, ctx())).toMatchObject({ status: "not_supported" });
+    const down = new TalkingSupplier();
+    down.ask = async () => {
+      throw new Error("fetch failed");
+    };
+    const quiet = vi.spyOn(console, "error").mockImplementation(() => {});
+    expect(await createKhataTools(new MemoryStore(), "RCB", { supplier: down }).askWholesaler.execute!({ question: "Ghee hai?" }, ctx())).toMatchObject({
+      status: "supplier_unavailable",
+    });
+    quiet.mockRestore();
   });
 });

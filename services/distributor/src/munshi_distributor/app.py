@@ -85,6 +85,21 @@ def agent_card() -> AgentCard:
                 output_modes=["application/json"],
             ),
             AgentSkill(
+                id="ask_the_desk",
+                name="Ask the order desk",
+                description=(
+                    'Send {"action": "chat", "message": "...", "shop": {"name": "..."}} or plain text, in '
+                    "Hindi, Kannada, English or a mix: what's in stock, substitutes, what to add to reach the "
+                    "minimum, when an order arrives. Answers in words; a quote it made comes back as data. "
+                    "Prices come from the price list, never from the conversation, and orders are placed only "
+                    "with the place_order skill."
+                ),
+                tags=["ordering", "conversation", "multilingual"],
+                examples=["basmati hai kya?", "ghee kab aayega?", "minimum se kam hai, kya add karun?"],
+                input_modes=["application/json", "text/plain"],
+                output_modes=["application/json", "text/plain"],
+            ),
+            AgentSkill(
                 id="delivery_status",
                 name="Track a delivery",
                 description=(

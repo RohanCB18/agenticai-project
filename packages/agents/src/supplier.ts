@@ -59,6 +59,8 @@ export interface SupplierAgent {
   order(quoteId: string): Promise<SupplierOrder>;
   /** Tracks an order placed from a quote: when it arrives, and the delivery note once it has. */
   delivery?(order: { orderId: string; quoteId: string; orderedAt: string }): Promise<SupplierDelivery>;
+  /** Asks the wholesaler's order desk something in words; its answer, and a quote if it made one. */
+  ask?(question: string, shopName: string): Promise<{ answer: string; quote?: SupplierQuote }>;
 }
 
 /** The wholesaler refused (expired quote, below its minimum) or couldn't be reached. */
@@ -98,12 +100,15 @@ export function readQuote(quoteId: string): QuoteContents | null {
 }
 
 /** The quote id from the latest successful askSupplierQuote in the conversation, if any. */
+const QUOTING_TOOLS = new Set(["askSupplierQuote", "askWholesaler"]);
+
 export function latestQuoteId(messages: ModelMessage[]): string | null {
   let found: string | null = null;
   for (const message of messages) {
     if (message.role !== "tool") continue;
     for (const part of message.content) {
-      if (part.type !== "tool-result" || part.toolName !== "askSupplierQuote" || part.output.type !== "json") continue;
+      // A quote from askSupplierQuote, or one the wholesaler's desk made while answering askWholesaler.
+      if (part.type !== "tool-result" || !QUOTING_TOOLS.has(part.toolName) || part.output.type !== "json") continue;
       const output = part.output.value as { status?: string; quoteId?: string } | null;
       if (output?.status === "quoted" && typeof output.quoteId === "string") found = output.quoteId;
     }

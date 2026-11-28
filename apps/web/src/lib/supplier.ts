@@ -9,6 +9,8 @@ import { type QuoteRequestItem, SupplierError, type SupplierAgent, type Supplier
 // (services/distributor, LangGraph); A2A is the only thing the two share.
 
 const TIMEOUT_MS = 15_000;
+/** A question to the wholesaler's desk goes through its Sarvam model: a few model turns, about 8 s live. */
+const ASK_TIMEOUT_MS = 40_000;
 
 type Reply = { type?: string; code?: string; message?: string } & Record<string, unknown>;
 
@@ -29,7 +31,7 @@ export function createA2ASupplier(baseUrl: string, opts: { fetchImpl?: typeof fe
   let client: ReturnType<typeof factory.createFromUrl> | undefined;
   let name = "the wholesaler";
 
-  async function send(data: Record<string, unknown>): Promise<Reply> {
+  async function send(data: Record<string, unknown>, timeoutMs = TIMEOUT_MS): Promise<Reply> {
     client ??= factory.createFromUrl(baseUrl).catch((error: unknown) => {
       client = undefined; // try discovery again next time
       throw error;
@@ -50,7 +52,7 @@ export function createA2ASupplier(baseUrl: string, opts: { fetchImpl?: typeof fe
         configuration: undefined,
         metadata: undefined,
       },
-      { signal: AbortSignal.timeout(TIMEOUT_MS) },
+      { signal: AbortSignal.timeout(timeoutMs) },
     );
     const reply = replyData(result);
     if (!reply) throw new SupplierError("bad_reply", "The wholesaler's agent sent no data.");
@@ -72,6 +74,13 @@ export function createA2ASupplier(baseUrl: string, opts: { fetchImpl?: typeof fe
       const reply = await send({ action: "order", quoteId });
       if (reply.type !== "order") throw new SupplierError("bad_reply", "The wholesaler's agent didn't confirm the order.");
       return reply as unknown as SupplierOrder;
+    },
+    async ask(question: string, shopName: string) {
+      const reply = await send({ action: "chat", message: question, shop: { name: shopName } }, ASK_TIMEOUT_MS);
+      // The desk answers in words ("reply"); when its model is down, a list of goods still comes back as a quote.
+      if (reply.type === "quote") return { answer: "", quote: reply as unknown as SupplierQuote };
+      if (reply.type !== "reply" || typeof reply.message !== "string") throw new SupplierError("bad_reply", "The wholesaler's agent didn't answer.");
+      return { answer: reply.message, quote: (reply.quote as SupplierQuote | undefined) ?? undefined };
     },
     async delivery({ orderId, quoteId, orderedAt }) {
       const reply = await send({ action: "delivery", orderId, quoteId, orderedAt });
