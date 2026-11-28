@@ -5,6 +5,7 @@ import { cancelLink, getLink, getOrder, LINK_STATUS, type LinkStatus, paidOnLink
 import { telegramSender } from "@/lib/channels/telegram";
 import type { MessagingChannel } from "@/lib/channels/types";
 import { whatsappSender } from "@/lib/channels/whatsapp";
+import { rememberInThread } from "@/lib/channels/history";
 
 // Turning a confirmed payment into khata entries. A webhook and a manual check can both
 // report the same payment, so everything here is safe to run twice.
@@ -99,13 +100,20 @@ export async function notifyOwnerOfPayment(db: SupabaseClient, merchantId: strin
   await notifyOwner(db, merchantId, `💰 ${balance?.name ?? "Customer"} paid ${formatINR(paidPaise)}. ${owes > 0 ? `Still owes ${formatINR(owes)}.` : "Khata clear."}`);
 }
 
-/** Sends the owner a message on every chat app linked to the shop. Failures are logged, never thrown. */
+/**
+ * Sends the owner a message on every chat app linked to the shop, and keeps it in that chat's
+ * history so a follow-up question is read knowing it. Failures are logged, never thrown.
+ */
 export async function notifyOwner(db: SupabaseClient, merchantId: string, text: string) {
   const { data: links } = await db.from("channel_links").select("channel, external_user_id").eq("merchant_id", merchantId);
   for (const link of links ?? []) {
-    await SENDERS[link.channel as MessagingChannel].sendText(link.external_user_id, text).catch((error: unknown) => {
+    const channel = link.channel as MessagingChannel;
+    try {
+      await SENDERS[channel].sendText(link.external_user_id, text);
+      await rememberInThread(db, merchantId, channel, { munshi: text });
+    } catch (error) {
       console.error("[munshi] owner notice failed:", error);
-    });
+    }
   }
 }
 

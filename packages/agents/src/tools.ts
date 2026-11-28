@@ -150,6 +150,9 @@ function gstEntry(p: GstPassage) {
   };
 }
 
+const PAST_PAYMENTS_NOTE =
+  "recentPayments are payments already made, each with its date. If the owner asks whether a supplier was paid, say which payment and on which date; never present an older payment as today's or as paying a newer order.";
+
 // Where a supplier's account comes from: only the owner, in the dashboard. Said whenever one is missing.
 const ADD_ACCOUNT_HINT =
   "Munshi can't add or change where money goes. Tell the owner to add the supplier's UPI ID or bank account in Munshi's dashboard (Suppliers), confirm it with the supplier, and then ask again.";
@@ -936,8 +939,17 @@ export function createKhataTools(store: KhataStore, shopName = "your shop", opti
         const due = orders.reduce((sum, o) => sum + o.totalPaise, 0);
         const unpaid = orders.slice(0, 5).map((o) => ({ orderId: o.orderRef, amount: formatINR(o.totalPaise), date: o.createdAt.slice(0, 10) }));
         if (!r.ok) return { ...r.result, unpaidOrders: unpaid, totalDue: formatINR(due) };
+        // Past payments, each with its date: live, "pay kar diya?" was answered with a payment two
+        // days old as if it were today's, from the chat's memory.
+        const paid = ((await store.recentSupplierPayouts?.(r.supplier.id)) ?? []).map((p) => ({
+          amount: formatINR(p.amountPaise),
+          status: p.status,
+          on: indianDate(p.at),
+          ...(p.utr ? { utr: p.utr } : {}),
+        }));
+        const history = paid.length ? { recentPayments: paid, paymentsNote: PAST_PAYMENTS_NOTE } : {};
         if (!r.supplier.account || !r.supplier.verified) {
-          return { status: "no_payout_account", supplier: name, unpaidOrders: unpaid, totalDue: formatINR(due), hint: ADD_ACCOUNT_HINT };
+          return { status: "no_payout_account", supplier: name, unpaidOrders: unpaid, totalDue: formatINR(due), ...history, hint: ADD_ACCOUNT_HINT };
         }
         const askedPaise = amount ? rupeesToPaise(amount) : null;
         return {
@@ -947,6 +959,7 @@ export function createKhataTools(store: KhataStore, shopName = "your shop", opti
           unpaidOrders: unpaid,
           totalDue: formatINR(due),
           ...(askedPaise ? { ownerAsked: formatINR(askedPaise) } : {}),
+          ...history,
           hint: payQuestionHint(askedPaise, due),
         };
       },

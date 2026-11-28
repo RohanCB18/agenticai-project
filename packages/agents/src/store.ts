@@ -93,6 +93,8 @@ export interface KhataStore {
   listSuppliers(): Promise<Supplier[]>;
   /** Orders to a supplier, by name as the wholesaler gave it, that nothing has paid yet. Newest first. */
   unpaidSupplierOrders(supplierName: string): Promise<SupplierOrderDue[]>;
+  /** The latest payments to a supplier, newest first: how much, how they ended, and when (ISO time). */
+  recentSupplierPayouts?(supplierId: string): Promise<{ amountPaise: Paise; status: SupplierPayout["status"]; utr: string | null; at: string }[]>;
   /**
    * Starts paying a verified supplier through Cashfree Easy Split: a payment page the owner pays,
    * settled to the supplier's account. Only called after the owner approved.

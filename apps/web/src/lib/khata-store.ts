@@ -386,6 +386,20 @@ export function createSupabaseKhataStore(db: SupabaseClient, merchantId: string,
       return rows.map(toSupplier);
     },
 
+    async recentSupplierPayouts(supplierId) {
+      const rows = must(
+        await db
+          .from("supplier_payouts")
+          .select("amount_paise, status, utr, created_at")
+          .eq("merchant_id", merchantId)
+          .eq("supplier_id", supplierId)
+          .order("created_at", { ascending: false })
+          .limit(3),
+        "List supplier payments",
+      ) as { amount_paise: number | string; status: SupplierPayout["status"]; utr: string | null; created_at: string }[];
+      return rows.map((r) => ({ amountPaise: Number(r.amount_paise), status: r.status, utr: r.utr, at: r.created_at }));
+    },
+
     async unpaidSupplierOrders(supplierName) {
       // Wholesalers name themselves on orders; match that name exactly, ignoring case.
       const exact = supplierName.replace(/[\\%_]/g, (c) => `\\${c}`);

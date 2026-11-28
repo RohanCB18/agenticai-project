@@ -49,9 +49,30 @@ export function lowProducts(products: Product[]) {
   return products.filter((p) => p.reorderLevel !== null && p.stockQty <= p.reorderLevel);
 }
 
-/** What to ask the wholesaler for: each low product topped up to twice its alert level, so it isn't low again next week. */
+/** What to ask the wholesaler for one product: topped up to twice its alert level, so it isn't low again next week. */
+export const topUpItem = (p: Product): QuoteRequestItem => ({ name: p.name, quantity: Math.max((p.reorderLevel ?? 0) * 2 - p.stockQty, 1), unit: p.unit });
+
+/** What to ask the wholesaler for: each low product topped up to twice its alert level. */
 export function restockItems(products: Product[]): QuoteRequestItem[] {
-  return lowProducts(products).map((p) => ({ name: p.name, quantity: Math.max(p.reorderLevel! * 2 - p.stockQty, 1), unit: p.unit }));
+  return lowProducts(products).map(topUpItem);
+}
+
+/**
+ * What runs low next, closest to its alert level first: products above their level but under
+ * twice it. When the low items alone come to less than the wholesaler's minimum order, these fill
+ * it, as an owner would add the dal that's nearly due rather than skip the order.
+ */
+export function nextToRunLow(products: Product[], exclude: Set<string> = new Set()): Product[] {
+  const ratio = (p: Product) => p.stockQty / p.reorderLevel!;
+  return products
+    .filter((p) => p.reorderLevel !== null && p.reorderLevel > 0 && !exclude.has(p.id) && p.stockQty > p.reorderLevel && p.stockQty < p.reorderLevel * 2)
+    .sort((a, b) => ratio(a) - ratio(b));
+}
+
+/** "₹1,160.50" → 116050. Null for anything without a number. */
+export function paiseOf(rupees: string): number | null {
+  const value = Number.parseFloat(rupees.replace(/[^0-9.]/g, ""));
+  return Number.isFinite(value) ? Math.round(value * 100) : null;
 }
 
 const amountOf = (quantity: number, unit: string) => `${Number(quantity.toFixed(3))} ${unit}`;
@@ -66,9 +87,22 @@ export type RestockPayee = { to: string; fromBalance: boolean };
  * there isn't when no wholesaler is connected, it can't supply anything, or the total is under its
  * minimum. `pay` is set when the owner added the supplier's account.
  */
-export function restockAlert(low: Product[], quote: SupplierQuote | null, pay: RestockPayee | null, problem?: string): { text: string; canOrder: boolean } {
+export function restockAlert(
+  low: Product[],
+  quote: SupplierQuote | null,
+  pay: RestockPayee | null,
+  problem?: string,
+  /** Added to reach the wholesaler's minimum order: what runs low next. */
+  added: Product[] = [],
+): { text: string; canOrder: boolean } {
   const alertAt = (p: Product) => (p.reorderLevel === null ? "" : ` (alert at ${amountOf(p.reorderLevel, p.unit)}${p.alertIsDefault ? ", Munshi's default" : ""})`);
-  const head = `📦 Running low: ${low.map((p) => `${p.name} ${amountOf(p.stockQty, p.unit)} left${alertAt(p)}`).join(", ")}.`;
+  const stock = (p: Product) => `${p.name} ${amountOf(p.stockQty, p.unit)} left${alertAt(p)}`;
+  const running = `📦 Running low: ${low.map(stock).join(", ")}.`;
+  const filled =
+    quote && added.length
+      ? `${possessive(quote.supplier)} minimum order is ${quote.minimumOrder}, so I added what runs low next: ${added.map(stock).join(", ")}.`
+      : null;
+  const head = filled ? `${running}\n${filled}` : running;
   if (!quote) return { text: `${head}\n\n${problem ?? "No wholesaler is connected to Munshi to order from."}`, canOrder: false };
 
   const cant = quote.unavailable.length ? `Can't supply: ${quote.unavailable.map((u) => `${u.requested} (${u.reason})`).join(", ")}.` : null;

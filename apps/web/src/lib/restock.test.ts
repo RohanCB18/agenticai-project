@@ -48,6 +48,39 @@ function wholesaler(over: { quote?: Partial<SupplierQuote>; orderFails?: boolean
   return { agent, asked, ordered };
 }
 
+/** A wholesaler with a price list: each line priced from it, the total checked against its ₹1,000 minimum. */
+function pricedWholesaler(prices: Record<string, number>) {
+  const asked: string[][] = [];
+  const rupees = (paise: number) => `₹${(paise / 100).toLocaleString("en-IN")}`;
+  const agent: SupplierAgent = {
+    name: "Sharma Traders",
+    async quote(items) {
+      asked.push(items.map((i) => i.name));
+      const sold = items.filter((i) => prices[i.name] !== undefined);
+      const lines = sold.map((i) => ({ requested: i.name, item: i.name, quantity: i.quantity, unit: i.unit ?? "", amount: rupees(prices[i.name]!), amountPaise: prices[i.name]! }));
+      const totalPaise = lines.reduce((sum, l) => sum + l.amountPaise, 0);
+      return {
+        supplier: "Sharma Traders",
+        lines,
+        unavailable: items.filter((i) => prices[i.name] === undefined).map((i) => ({ requested: i.name, reason: "not in our catalogue" })),
+        total: rupees(totalPaise),
+        totalPaise,
+        discount: null,
+        minimumOrder: "₹1,000",
+        meetsMinimum: totalPaise >= 100000,
+        deliverySlot: "Mon 30 Nov, 10 am to 1 pm",
+        payment: "Cash or UPI on delivery",
+        validUntil: new Date(NOW.getTime() + DAY).toISOString(),
+        quoteId: lines.length ? quoteId(new Date(NOW.getTime() + DAY)) : undefined,
+      };
+    },
+    async order(): Promise<SupplierOrder> {
+      throw new Error("not ordered in these tests");
+    },
+  };
+  return { agent, asked };
+}
+
 /** approvals rows, in memory. */
 function memoryBook() {
   const rows: { id: string; status: string; productIds: string[]; quoteId: string | null; expiresAt: string; createdAt: Date; note: Record<string, unknown> }[] = [];
@@ -135,6 +168,49 @@ describe("asking to restock", () => {
     expect(await askToRestock({ store, book: memoryBook().book, chats, supplier: agent, shopName: "RCB", now: NOW })).toBe("told");
     expect(asks).toHaveLength(0);
     expect(told[0]).toContain("Orders start at ₹1,000");
+  });
+});
+
+describe("an order under the wholesaler's minimum", () => {
+  // Live on 28 Nov: 15 Maggi sold online took it to 9 packets, and 48 packets (₹576) were under
+  // Sharma Traders' ₹1,000 minimum, so Munshi could only say so and "haan" did nothing. An owner
+  // would add the dal that's nearly due; so does Munshi now.
+  const item = (id: string, name: string, unit: string, stockQty: number) => ({ id, name, aliases: [], unit, stockQty, reorderLevel: 10, pricePaise: null });
+
+  beforeEach(() => {
+    store.products = [
+      item("maggi", "Maggi Noodles", "packet", 9),
+      item("toor", "Toor Dal", "kg", 13),
+      item("moong", "Moong Dal", "kg", 12),
+      item("bread", "Brown Bread", "packet", 11), // due soonest, but Sharma Traders doesn't sell it
+      item("parle", "Parle-G", "packet", 30), // three times its level: not due
+    ];
+  });
+
+  it("is filled with what runs low next, the fewest items needed, and gets a Haan button", async () => {
+    const { agent, asked } = pricedWholesaler({ "Maggi Noodles": 57600, "Moong Dal": 116000, "Toor Dal": 138000 });
+    const { book, rows } = memoryBook();
+    const { chats, asks } = memoryChats();
+
+    expect(await askToRestock({ store, book, chats, supplier: agent, shopName: "RCB", fromBalance: true, now: NOW })).toBe("asked");
+    expect(asked).toEqual([
+      ["Maggi Noodles"], // under the minimum
+      ["Maggi Noodles", "Brown Bread", "Moong Dal", "Toor Dal"], // what each would add
+      ["Maggi Noodles", "Moong Dal"], // the fewest that reach it
+    ]);
+    expect(asks[0]!.text).toContain("Sharma Traders' minimum order is ₹1,000, so I added what runs low next: Moong Dal 12 kg left (alert at 10 kg).");
+    expect(asks[0]!.text).toContain("Total ₹1,736");
+    expect(asks[0]!.yes).toBe("✅ Haan, order + pay");
+    // Only Maggi was low: the dal isn't marked as asked about, so it gets its own ask when it is.
+    expect(rows[0]!.productIds).toEqual(["maggi"]);
+  });
+
+  it("only tells, as before, when even everything due soon can't reach the minimum", async () => {
+    const { agent } = pricedWholesaler({ "Maggi Noodles": 57600, "Moong Dal": 20000 });
+    const { chats, asks, told } = memoryChats();
+    expect(await askToRestock({ store, book: memoryBook().book, chats, supplier: agent, shopName: "RCB", now: NOW })).toBe("told");
+    expect(asks).toHaveLength(0);
+    expect(told[0]).toContain("Orders start at ₹1,000, so this can't be ordered alone.");
   });
 });
 

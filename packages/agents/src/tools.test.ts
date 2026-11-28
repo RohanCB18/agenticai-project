@@ -516,6 +516,19 @@ describe("paying suppliers", () => {
     });
   });
 
+  it("lists past payments with their dates, so an old one isn't reported as today's", async () => {
+    // Live on 28 Nov: "pay kar diya Sharma Traders ko?" got "Haan, 100 rupaye pahunch gaye", the
+    // ₹100 of 26 Nov, remembered from the chat, while that day's restock was never ordered.
+    store.payouts = [{ id: "pay_1", supplierId: "sup_1", status: "success", amountPaise: 10000, utr: "1795750630696151", reason: null, at: "2026-11-26T08:20:00Z" }];
+    const out = await tools.supplierDues.execute!({ supplierName: "Sharma Traders" }, ctx);
+    expect(out).toMatchObject({
+      recentPayments: [{ amount: "₹100", status: "success", on: "26 Nov 2026", utr: "1795750630696151" }],
+      paymentsNote: expect.stringContaining("never present an older payment as today's"),
+    });
+    store.payouts = [];
+    expect(await tools.supplierDues.execute!({ supplierName: "Sharma Traders" }, ctx)).not.toHaveProperty("recentPayments");
+  });
+
   it("reads the owner's amount from their message when the model leaves it out", async () => {
     // Live again on 26 Nov: the model called supplierDues without the ₹100, and asked about ₹3,900.
     const said = { toolCallId: "t2", messages: [{ role: "user", content: "Sharma Traders ko 100 rupaye payment kar do" }], context: {} } as never;

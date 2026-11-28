@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { defaultAlertLevel, lowProducts, plainYesNo, restockAlert, restockItems, restockOrdered } from "./restock";
+import { defaultAlertLevel, lowProducts, nextToRunLow, paiseOf, plainYesNo, restockAlert, restockItems, restockOrdered } from "./restock";
 import type { Product } from "./store";
 import type { SupplierOrder, SupplierQuote } from "./supplier";
 
@@ -134,5 +134,33 @@ describe("after haan", () => {
   it("says plainly when nothing was paid", () => {
     expect(restockOrdered(order, null)).toContain("Pay on delivery.");
     expect(restockOrdered(order, { status: "failed", error: "Cashfree was down" })).toContain("Nothing was paid");
+  });
+});
+
+describe("filling an order up to the wholesaler's minimum", () => {
+  it("takes what runs low next, closest to its alert level first", () => {
+    const moong = product("Moong Dal", 12, 10);
+    const atta = product("Atta", 16, 10);
+    const salt = product("Salt", 25, 10); // over twice its level: not due for a while
+    const none = product("Matchbox", 3, null, "box"); // no level: never counted
+    expect(nextToRunLow([atta, rice, salt, moong, none, sugar]).map((p) => p.name)).toEqual(["Moong Dal", "Atta"]);
+    expect(nextToRunLow([atta, moong], new Set(["moong dal"])).map((p) => p.name)).toEqual(["Atta"]);
+  });
+
+  it("reads rupee amounts", () => {
+    expect(paiseOf("₹1,000")).toBe(100000);
+    expect(paiseOf("₹1,160.50")).toBe(116050);
+    expect(paiseOf("free")).toBeNull();
+  });
+
+  it("says what was added, and why, before the quote", () => {
+    const maggiLow = { ...product("Maggi Noodles", 9, 10, "packet"), alertIsDefault: true };
+    const moong = product("Moong Dal", 12, 10);
+    const { text, canOrder } = restockAlert([maggiLow], quote({ total: "₹1,736", totalPaise: 173600 }), { to: "UPI su•••@upi", fromBalance: true }, undefined, [moong]);
+    expect(canOrder).toBe(true);
+    expect(text.split("\n").slice(0, 2)).toEqual([
+      "📦 Running low: Maggi Noodles 9 packet left (alert at 10 packet, Munshi's default).",
+      "Sharma Traders' minimum order is ₹1,000, so I added what runs low next: Moong Dal 12 kg left (alert at 10 kg).",
+    ]);
   });
 });

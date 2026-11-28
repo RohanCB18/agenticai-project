@@ -9,6 +9,9 @@ export type SupplierLine = {
   quantity: number;
   unit: string;
   amount: string;
+  /** The line's amount in paise, as the wholesaler priced it. */
+  amountPaise?: number;
+  /** The name Munshi asked for, which this line answers. */
   requested?: string;
   packs?: number;
   pack?: string;

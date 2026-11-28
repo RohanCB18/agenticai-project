@@ -36,6 +36,7 @@ import { payoutsConfigured } from "@/lib/cashfree-payouts";
 import { reconcilePayouts, watchPayouts } from "@/lib/supplier-payouts";
 import { traced } from "@/lib/telemetry";
 import { ON_DEMAND_KEY, REMINDER_APPROVAL_PREFIX } from "@/workflows/reminder-hook";
+import { rememberInThread } from "./history";
 import type { ChannelSender, Inbound, LinkButton, MessagingChannel } from "./types";
 
 const APP_NAME: Record<MessagingChannel, string> = { telegram: "Telegram", whatsapp: "WhatsApp" };
@@ -102,10 +103,12 @@ export async function handleInbound(inbound: Inbound, sender: ChannelSender) {
   }
   // A restock ask Munshi sent when stock ran low: "haan" orders that exact quote and pays the
   // supplier, in code, with no model in between. A tap, or (below) a typed or spoken "haan".
-  const answerRestockAsk = async (approvalId: string, approved: boolean) => {
+  const answerRestockAsk = async (approvalId: string, approved: boolean, ownerSaid?: string) => {
     if (approved) await sender.showWorking?.(chatId, "typing");
     const answer = await decideRestock(admin, merchant.id, approvalId, approved);
     await sender.sendText(chatId, answer.text, answer.buttons);
+    // So "pay kar diya?" next is answered knowing the order and the payment.
+    await rememberInThread(admin, merchant.id, channel, { munshi: answer.text, owner: ownerSaid });
     if (answer.askAgain) await alertLowStock(admin, merchant.id);
     if (answer.paying) await watchPayouts(admin, merchant.id, { forMs: watchTime(startedAt) }).catch(logWatchError);
   };
@@ -161,7 +164,7 @@ export async function handleInbound(inbound: Inbound, sender: ChannelSender) {
       });
       if (ask) {
         console.info(`[munshi] "${text}" answers restock ask ${ask}`);
-        return answerRestockAsk(ask, said);
+        return answerRestockAsk(ask, said, text);
       }
     }
     ownerText = text;

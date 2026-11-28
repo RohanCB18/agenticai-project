@@ -164,7 +164,7 @@ export class MemoryStore implements KhataStore {
   }
 
   suppliers: Supplier[] = [];
-  payouts: (SupplierPayout & { supplierId: string; supplierOrderId?: string })[] = [];
+  payouts: (SupplierPayout & { supplierId: string; supplierOrderId?: string; at?: string })[] = [];
   /** What a new supplier payment is: a payment page by default; tests set "success" or "failed". */
   payoutStatus: SupplierPayout["status"] = "pending";
   payoutFails = false;
@@ -175,6 +175,14 @@ export class MemoryStore implements KhataStore {
 
   async listSuppliers() {
     return this.suppliers;
+  }
+
+  async recentSupplierPayouts(supplierId: string) {
+    return this.payouts
+      .filter((p) => p.supplierId === supplierId)
+      .reverse()
+      .slice(0, 3)
+      .map((p) => ({ amountPaise: p.amountPaise, status: p.status, utr: p.utr, at: p.at ?? new Date().toISOString() }));
   }
 
   async unpaidSupplierOrders(supplierName: string) {

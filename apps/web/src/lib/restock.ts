@@ -2,6 +2,9 @@ import "server-only";
 import {
   type KhataStore,
   lowProducts,
+  nextToRunLow,
+  paiseOf,
+  type Product,
   readQuote,
   restockAlert,
   restockItems,
@@ -10,9 +13,11 @@ import {
   type SupplierAgent,
   type SupplierOrder,
   type SupplierQuote,
+  topUpItem,
 } from "@munshi/agents";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { telegramSender } from "@/lib/channels/telegram";
+import { rememberInThread } from "@/lib/channels/history";
 import type { ApprovalLabels, LinkButton, MessagingChannel } from "@/lib/channels/types";
 import { whatsappSender } from "@/lib/channels/whatsapp";
 import { payoutsConfigured } from "@/lib/cashfree-payouts";
@@ -63,30 +68,75 @@ async function payeeFor(store: KhataStore, wholesaler: string): Promise<Supplier
   return (await store.listSuppliers()).find((s) => s.verified && s.account && sameName(s.name, wholesaler));
 }
 
+/** How many of the next-to-run-low products a short order may be filled with. */
+const MAX_FILL = 8;
+
+/**
+ * A quote under the wholesaler's minimum order, filled with what runs low next (closest to its
+ * alert level first), as an owner would add the dal that's nearly due rather than skip the order.
+ * The wholesaler prices everything: one quote with every candidate shows what each adds, then the
+ * fewest that reach the minimum are quoted again, and that quote is what "haan" orders. `added` is
+ * empty, and the short quote kept, when nothing the wholesaler sells can fill it.
+ */
+export async function fillToMinimum(
+  supplier: SupplierAgent,
+  shopName: string,
+  low: Product[],
+  products: Product[],
+  short: SupplierQuote,
+): Promise<{ quote: SupplierQuote; added: Product[] }> {
+  const candidates = nextToRunLow(products, new Set(low.map((p) => p.id))).slice(0, MAX_FILL);
+  if (candidates.length === 0) return { quote: short, added: [] };
+  const base = low.map(topUpItem);
+  const probe = await supplier.quote([...base, ...candidates.map(topUpItem)], shopName);
+  if (!probe.quoteId || !probe.meetsMinimum) return { quote: short, added: [] };
+
+  const minimum = paiseOf(probe.minimumOrder) ?? Number.POSITIVE_INFINITY;
+  const lineFor = (p: Product) => probe.lines.find((l) => (l.requested ?? l.item).trim().toLowerCase() === p.name.trim().toLowerCase());
+  const sold = candidates.filter((p) => lineFor(p)); // the ones the wholesaler can send
+  const added: Product[] = [];
+  let total = short.totalPaise;
+  for (const p of sold) {
+    if (total >= minimum) break;
+    const line = lineFor(p)!;
+    added.push(p);
+    total += line.amountPaise ?? paiseOf(line.amount) ?? 0;
+  }
+  // Every candidate was needed and the wholesaler sells them all: the probe is that exact order.
+  if (added.length === candidates.length) return { quote: probe, added };
+  const quote = await supplier.quote([...base, ...added.map(topUpItem)], shopName);
+  // A discount can take a just-enough total back under the minimum: then the fuller quote stands.
+  return quote.quoteId && quote.meetsMinimum ? { quote, added } : { quote: probe, added: sold };
+}
+
 /**
  * Asks the owner about anything newly low, with the wholesaler's quote and a Haan button when it
- * can be ordered. "none" when there is nothing new to ask or nowhere to ask it.
+ * can be ordered. An order under the wholesaler's minimum is filled with what runs low next.
+ * "none" when there is nothing new to ask or nowhere to ask it.
  */
 export async function askToRestock({ store, book, chats, supplier, shopName, fromBalance = false, now = new Date() }: RestockDeps): Promise<"none" | "asked" | "told"> {
   if (chats.count === 0) return "none";
-  const low = lowProducts(await store.listProducts());
+  const products = await store.listProducts();
+  const low = lowProducts(products);
   if (low.length === 0) return "none";
   const asked = await book.askedSince(new Date(now.getTime() - ASK_AGAIN_AFTER_MS));
   const fresh = low.filter((p) => !asked.has(p.id));
   if (fresh.length === 0) return "none";
 
   let quote: SupplierQuote | null = null;
+  let added: Product[] = [];
   let problem: string | undefined;
   if (supplier) {
     try {
       quote = await supplier.quote(restockItems(fresh), shopName);
+      if (quote.quoteId && !quote.meetsMinimum) ({ quote, added } = await fillToMinimum(supplier, shopName, fresh, products, quote));
     } catch (error) {
       console.warn("[munshi] restock quote failed:", error instanceof Error ? error.message : error);
       problem = `${supplier.name} didn't answer just now, so there's no quote yet. Say "jo khatam ho raha hai uska order do" to try again.`;
     }
   }
   const payee = quote ? await payeeFor(store, quote.supplier) : undefined;
-  const { text, canOrder } = restockAlert(fresh, quote, payee ? { to: payee.account!, fromBalance } : null, problem);
+  const { text, canOrder } = restockAlert(fresh, quote, payee ? { to: payee.account!, fromBalance } : null, problem, added);
   const id = await book.open({
     productIds: fresh.map((p) => p.id),
     quoteId: canOrder ? quote!.quoteId! : null,
@@ -95,7 +145,8 @@ export async function askToRestock({ store, book, chats, supplier, shopName, fro
     expiresAt: quote?.validUntil ? new Date(quote.validUntil) : new Date(now.getTime() + 24 * 60 * 60_000),
     offered: canOrder,
   });
-  console.info(`[munshi] restock ask ${id}: ${fresh.length} low, ${canOrder ? `quote ${quote!.total}` : "nothing to order"}`);
+  const filledWith = added.length ? `, filled to the minimum with ${added.map((p) => p.name).join(", ")}` : "";
+  console.info(`[munshi] restock ask ${id}: ${fresh.length} low, ${canOrder ? `quote ${quote!.total}${filledWith}` : "nothing to order"}`);
   if (!canOrder) {
     await chats.tell(text);
     return "told";
@@ -252,13 +303,21 @@ const SENDERS = { telegram: telegramSender, whatsapp: whatsappSender };
 export async function linkedChats(admin: SupabaseClient, merchantId: string): Promise<OwnerChats> {
   const { data } = await admin.from("channel_links").select("channel, external_user_id").eq("merchant_id", merchantId);
   const links = (data ?? []) as { channel: MessagingChannel; external_user_id: string }[];
-  const each = async (send: (link: (typeof links)[number]) => Promise<void>) => {
-    for (const link of links) await send(link).catch((error: unknown) => console.error("[munshi] restock message failed:", error));
+  // Each message sent is also kept in that chat's history, so the owner's reply is read knowing it.
+  const each = async (text: string, send: (link: (typeof links)[number]) => Promise<void>) => {
+    for (const link of links) {
+      try {
+        await send(link);
+        await rememberInThread(admin, merchantId, link.channel, { munshi: text });
+      } catch (error) {
+        console.error("[munshi] restock message failed:", error);
+      }
+    }
   };
   return {
     count: links.length,
-    ask: (text, approvalId, labels) => each((l) => SENDERS[l.channel].sendApproval(l.external_user_id, text, approvalId, labels)),
-    tell: (text, buttons) => each((l) => SENDERS[l.channel].sendText(l.external_user_id, text, buttons)),
+    ask: (text, approvalId, labels) => each(text, (l) => SENDERS[l.channel].sendApproval(l.external_user_id, text, approvalId, labels)),
+    tell: (text, buttons) => each(text, (l) => SENDERS[l.channel].sendText(l.external_user_id, text, buttons)),
   };
 }
 
