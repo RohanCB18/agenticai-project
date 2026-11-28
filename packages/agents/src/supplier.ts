@@ -47,11 +47,18 @@ export type SupplierOrder = {
 
 export type QuoteRequestItem = { name: string; quantity: number; unit?: string };
 
+/** Where an order is, by the wholesaler's word: on its way, or delivered with its delivery note (the invoice, as data). */
+export type SupplierDelivery =
+  | { status: "on_the_way"; supplier: string; orderId: string; expectedAt: string; deliverySlot: string }
+  | { status: "delivered"; supplier: string; orderId: string; invoiceNo: string; lines: SupplierLine[]; total: string; totalPaise: number; deliveredAt: string };
+
 /** A wholesaler Munshi can reorder from. In the app, an A2A client for the wholesaler's agent. */
 export interface SupplierAgent {
   readonly name: string;
   quote(items: QuoteRequestItem[], shopName: string): Promise<SupplierQuote>;
   order(quoteId: string): Promise<SupplierOrder>;
+  /** Tracks an order placed from a quote: when it arrives, and the delivery note once it has. */
+  delivery?(order: { orderId: string; quoteId: string; orderedAt: string }): Promise<SupplierDelivery>;
 }
 
 /** The wholesaler refused (expired quote, below its minimum) or couldn't be reached. */

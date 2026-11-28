@@ -344,21 +344,31 @@ export function createSupabaseKhataStore(db: SupabaseClient, merchantId: string,
     },
 
     async saveSupplierOrder(order) {
-      const { error } = await db.from("supplier_orders").upsert(
-        {
-          merchant_id: merchantId,
-          supplier: order.supplier,
-          order_ref: order.orderId,
-          quote_id: order.quoteId,
-          lines: order.lines,
-          total_paise: order.totalPaise,
-          delivery_slot: order.deliverySlot,
-          payment: order.payment,
-        },
-        { onConflict: "merchant_id,supplier,order_ref", ignoreDuplicates: true },
-      );
+      const { data: saved, error } = await db
+        .from("supplier_orders")
+        .upsert(
+          {
+            merchant_id: merchantId,
+            supplier: order.supplier,
+            order_ref: order.orderId,
+            quote_id: order.quoteId,
+            lines: order.lines,
+            total_paise: order.totalPaise,
+            delivery_slot: order.deliverySlot,
+            payment: order.payment,
+          },
+          { onConflict: "merchant_id,supplier,order_ref", ignoreDuplicates: true },
+        )
+        .select("order_ref");
       if (error) throw new Error(`Save supplier order failed: ${error.message}`);
       await store.audit("supplier_order_placed", { supplier: order.supplier, orderId: order.orderId, totalPaise: order.totalPaise });
+      // A new order (not the same one saved again) is watched until it's delivered, and its goods
+      // go into stock when it is: nobody has to send the bill.
+      if ((saved ?? []).length > 0) {
+        // Imported here: deliveries reads the shop's products through this store.
+        const { watchDelivery } = await import("@/lib/deliveries");
+        await watchDelivery(merchantId, order.orderId);
+      }
     },
 
     async saveChart({ title, png }) {

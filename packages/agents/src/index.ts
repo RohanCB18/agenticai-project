@@ -18,3 +18,4 @@ export * from "./supplier";
 export * from "./charts";
 export * from "./browser";
 export * from "./restock";
+export * from "./deliveries";

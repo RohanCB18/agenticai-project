@@ -16,10 +16,10 @@ def test_health():
     assert client.get("/health").json()["status"] == "ok"
 
 
-def test_agent_card_advertises_both_skills_over_json_rpc():
+def test_agent_card_advertises_its_skills_over_json_rpc():
     card = client.get("/.well-known/agent-card.json").json()
     assert card["name"] == "Sharma Traders Wholesale Agent"
-    assert [skill["id"] for skill in card["skills"]] == ["quote_reorder", "place_order"]
+    assert [skill["id"] for skill in card["skills"]] == ["quote_reorder", "place_order", "delivery_status"]
     assert card["supportedInterfaces"][0]["protocolBinding"] == "JSONRPC"
     assert card["supportedInterfaces"][0]["url"].endswith("/a2a")
 
@@ -80,3 +80,16 @@ async def test_a_forged_quote_is_refused():
 async def test_unclear_requests_get_instructions():
     reply, _ = await _send(new_text_part("hello"))
     assert reply["type"] == "help"
+
+
+async def test_tracking_a_delivery_over_a2a():
+    quote, _ = await _send(
+        new_data_part({"action": "quote", "items": [{"name": "Rice", "quantity": 20, "unit": "kg"}]})
+    )
+    order, _ = await _send(new_data_part({"action": "order", "quoteId": quote["quoteId"]}))
+    status, summary = await _send(
+        new_data_part({"action": "delivery", "orderId": order["orderId"], "quoteId": quote["quoteId"]})
+    )
+    assert status["type"] == "delivery"
+    assert status["status"] == "on_the_way"  # ordered now: delivered the next working morning
+    assert summary.startswith(f"Order {order['orderId']} is on its way")

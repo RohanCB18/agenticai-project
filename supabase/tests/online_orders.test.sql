@@ -25,7 +25,7 @@ select is(
   (select count(*)::int from public.ledger_entries where kind = 'sale' and source = 'online' and amount_paise = 12400 and note = 'Online order (Priya): Rice 2 kg'),
   1, 'the sale says it was an online order, and whose');
 select is(
-  (select count(*)::int from public.stock_movements where product_id = (select rice_id from t) and source = 'online' and delta = -2),
+  (select count(*)::int from public.stock_movements where product_id = (select rice_id from t) and source = 'online' and delta = -2 and created_at = now()),
   1, 'the stock movement says online too');
 
 select throws_ok(

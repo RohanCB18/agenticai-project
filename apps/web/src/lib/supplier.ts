@@ -1,7 +1,7 @@
 import "server-only";
 import { type Message, Role, type SendMessageResult } from "@a2a-js/sdk";
 import { ClientFactory, DefaultAgentCardResolver, JsonRpcTransportFactory } from "@a2a-js/sdk/client";
-import { type QuoteRequestItem, SupplierError, type SupplierAgent, type SupplierOrder, type SupplierQuote } from "@munshi/agents";
+import { type QuoteRequestItem, SupplierError, type SupplierAgent, type SupplierDelivery, type SupplierOrder, type SupplierQuote } from "@munshi/agents";
 
 // Munshi's side of A2A: a client for a wholesaler's agent. It finds the agent from its Agent Card
 // (/.well-known/agent-card.json), sends one message per request with a JSON data part, and reads
@@ -72,6 +72,11 @@ export function createA2ASupplier(baseUrl: string, opts: { fetchImpl?: typeof fe
       const reply = await send({ action: "order", quoteId });
       if (reply.type !== "order") throw new SupplierError("bad_reply", "The wholesaler's agent didn't confirm the order.");
       return reply as unknown as SupplierOrder;
+    },
+    async delivery({ orderId, quoteId, orderedAt }) {
+      const reply = await send({ action: "delivery", orderId, quoteId, orderedAt });
+      if (reply.type !== "delivery") throw new SupplierError("bad_reply", "The wholesaler's agent didn't say where the order is.");
+      return reply as unknown as SupplierDelivery;
     },
   };
 }

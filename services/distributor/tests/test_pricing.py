@@ -5,7 +5,7 @@ import pytest
 
 from munshi_distributor import pricing
 from munshi_distributor.catalog import find_item
-from munshi_distributor.pricing import OrderError, delivery_slot, place_order, quote, rupees
+from munshi_distributor.pricing import OrderError, delivery_slot, delivery_status, place_order, quote, rupees
 
 FRIDAY_NOON_IST = datetime(2026, 11, 13, 6, 30, tzinfo=UTC)
 
@@ -72,3 +72,57 @@ def test_production_refuses_to_sign_with_a_throwaway_key(monkeypatch):
     monkeypatch.delenv("DISTRIBUTOR_QUOTE_SECRET", raising=False)
     with pytest.raises(RuntimeError):
         pricing.quote([{"name": "rice", "quantity": 25}], None)
+
+
+def test_a_delivery_note_comes_once_the_van_has_reached_the_shop():
+    ordered = FRIDAY_NOON_IST
+    q = quote([{"name": "Maggi Noodles", "quantity": 11}, {"name": "Moong Dal", "quantity": 8}], "Shop", ordered)
+    # A quote from two weeks ago can't be ordered now, but its order is tracked by the signature alone.
+    order_id = pricing.order_id_for(jwt.decode(q["quoteId"], options={"verify_signature": False}))
+
+    # Ordered Friday noon: delivered Saturday, 11 am India time.
+    friday_evening = datetime(2026, 11, 13, 13, 0, tzinfo=UTC)
+    on_the_way = delivery_status(q["quoteId"], order_id, ordered.isoformat(), now=friday_evening)
+    assert (on_the_way["status"], on_the_way["expectedAt"]) == ("on_the_way", "2026-11-14T11:00:00+05:30")
+
+    saturday_noon = datetime(2026, 11, 14, 6, 30, tzinfo=UTC)
+    note = delivery_status(q["quoteId"], order_id, ordered.isoformat(), now=saturday_noon)
+    assert note["status"] == "delivered"
+    assert note["invoiceNo"] == "INV-" + order_id.removeprefix("ST-")
+    # Each line carries the shop's own name for it, so the shop knows which product to add it to.
+    assert [(line["requested"], line["item"], line["quantity"]) for line in note["lines"]] == [
+        ("Maggi Noodles", "Maggi Noodles", 48),
+        ("Moong Dal", "Moong Dal", 10),
+    ]
+
+
+def test_a_demo_delivers_minutes_after_the_order(monkeypatch):
+    monkeypatch.setenv("DISTRIBUTOR_DELIVERY_MINUTES", "3")
+    ordered = datetime.now(UTC)
+    q = quote([{"name": "rice", "quantity": 25}], "Shop", ordered)
+    assert q["deliverySlot"] == "today, about 3 minutes after you order (demo)"
+    order = place_order(q["quoteId"])
+    later = ordered + timedelta(minutes=2)
+    assert delivery_status(q["quoteId"], order["orderId"], later.isoformat(), now=later)["status"] == "on_the_way"
+    assert (
+        delivery_status(q["quoteId"], order["orderId"], later.isoformat(), now=later + timedelta(minutes=3))["status"]
+        == "delivered"
+    )
+    # The shop can't claim it ordered before the quote, or a day after it ran out.
+    early = (ordered - timedelta(days=5)).isoformat()
+    assert (
+        delivery_status(q["quoteId"], order["orderId"], early, now=ordered + timedelta(minutes=1))["status"]
+        == "on_the_way"
+    )
+
+
+def test_only_this_wholesalers_orders_are_tracked():
+    q = quote([{"name": "rice", "quantity": 25}], None, datetime.now(UTC))
+    order = place_order(q["quoteId"])
+    with pytest.raises(OrderError) as error:
+        delivery_status(q["quoteId"], "ST-00000000")
+    assert error.value.code == "wrong_order"
+    claims = jwt.decode(q["quoteId"], options={"verify_signature": False})
+    with pytest.raises(OrderError) as error:
+        delivery_status(jwt.encode(claims, "not-the-key", algorithm="HS256"), order["orderId"])
+    assert error.value.code == "invalid_quote"

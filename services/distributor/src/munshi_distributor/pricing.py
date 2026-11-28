@@ -62,14 +62,37 @@ def _next_working_day(day: date) -> date:
     return day
 
 
-def delivery_slot(now: datetime) -> str:
-    """The morning after the order is packed: the same day before 6 pm, else the next working day."""
+def demo_delivery_minutes() -> int:
+    """For a demo, DISTRIBUTOR_DELIVERY_MINUTES delivers that many minutes after the quote, not next morning."""
+    try:
+        return max(0, int(os.environ.get("DISTRIBUTOR_DELIVERY_MINUTES") or 0))
+    except ValueError:
+        return 0
+
+
+def _delivery_day(now: datetime) -> date:
     local = now.astimezone(INDIA)
     packed = local.date()
     if local.hour >= CUTOFF_HOUR or packed.weekday() == 6:
         packed = _next_working_day(packed)
-    day = _next_working_day(packed)
-    return f"{day.strftime('%a %d %b')}, 10 am to 1 pm"
+    return _next_working_day(packed)
+
+
+def delivery_slot(now: datetime) -> str:
+    """The morning after the order is packed: the same day before 6 pm, else the next working day."""
+    minutes = demo_delivery_minutes()
+    if minutes:
+        return f"today, about {minutes} minutes after you order (demo)"
+    return f"{_delivery_day(now).strftime('%a %d %b')}, 10 am to 1 pm"
+
+
+def delivered_at(ordered: datetime) -> datetime:
+    """When the van reaches the shop for an order placed at `ordered`: 11 am on the delivery day, or demo minutes."""
+    minutes = demo_delivery_minutes()
+    if minutes:
+        return ordered + timedelta(minutes=minutes)
+    day = _delivery_day(ordered)
+    return datetime(day.year, day.month, day.day, 11, tzinfo=INDIA)
 
 
 def quote(items: list[dict], shop: str | None, now: datetime | None = None) -> dict:
@@ -138,8 +161,11 @@ def quote(items: list[dict], shop: str | None, now: datetime | None = None) -> d
             "iat": int(now.timestamp()),
             "exp": int(expires.timestamp()),
             "shop": shop or "",
+            # "requested" is the shop's own name for the item, so the delivery note can say which of
+            # the shop's products to add the goods to.
             "lines": [
-                {k: line[k] for k in ("sku", "item", "packs", "pack", "quantity", "unit", "amount")} for line in lines
+                {k: line[k] for k in ("requested", "sku", "item", "packs", "pack", "quantity", "unit", "amount")}
+                for line in lines
             ],
             "total": rupees(total),
             "totalPaise": total,
@@ -167,7 +193,7 @@ def place_order(quote_id: str, now: datetime | None = None) -> dict:
         raise OrderError("invalid_quote", "This quote wasn't issued by Sharma Traders.") from error
     if claims["totalPaise"] < MIN_ORDER_PAISE:
         raise OrderError("below_minimum", f"Orders start at {rupees(MIN_ORDER_PAISE)}; this one is {claims['total']}.")
-    order_id = "ST-" + hashlib.sha256(claims["jti"].encode()).hexdigest()[:8].upper()
+    order_id = order_id_for(claims)
     return {
         "type": "order",
         "status": "confirmed",
@@ -179,4 +205,59 @@ def place_order(quote_id: str, now: datetime | None = None) -> dict:
         "deliverySlot": claims["deliverySlot"],
         "payment": "Cash or UPI on delivery",
         "confirmedAt": (now or datetime.now(UTC)).isoformat(),
+    }
+
+
+def order_id_for(claims: dict) -> str:
+    return "ST-" + hashlib.sha256(claims["jti"].encode()).hexdigest()[:8].upper()
+
+
+def delivery_status(quote_id: str, order_id: str, ordered_at: str | None = None, now: datetime | None = None) -> dict:
+    """
+    Where an order is: on its way, or delivered with the delivery note (the invoice the driver hands
+    over, as data). The quote this wholesaler signed is the order's record, so this needs no order
+    database: its signature is checked, its expiry isn't (a delivery comes after the quote's 24 hours).
+    """
+    now = now or datetime.now(UTC)
+    try:
+        claims = jwt.decode(
+            quote_id,
+            _secret(),
+            algorithms=["HS256"],
+            issuer=ISSUER,
+            options={"require": ["jti", "iat"], "verify_exp": False},
+        )
+    except jwt.InvalidTokenError as error:
+        raise OrderError("invalid_quote", "This order wasn't placed with Sharma Traders.") from error
+    if order_id_for(claims) != order_id:
+        raise OrderError("wrong_order", f"Order {order_id} isn't the order for this quote.")
+    # When it was ordered: this demo keeps no order book, so the shop says, and it can only be within
+    # the quote's 24 hours (orders are refused after that).
+    quoted = datetime.fromtimestamp(claims["iat"], UTC)
+    ordered = quoted
+    if ordered_at:
+        try:
+            ordered = min(max(datetime.fromisoformat(ordered_at), quoted), quoted + QUOTE_TTL)
+        except (ValueError, TypeError):  # not a date, or one without a time zone
+            ordered = quoted
+    arrives = delivered_at(ordered)
+    if now < arrives:
+        return {
+            "type": "delivery",
+            "status": "on_the_way",
+            "supplier": SUPPLIER,
+            "orderId": order_id,
+            "expectedAt": arrives.isoformat(),
+            "deliverySlot": claims["deliverySlot"],
+        }
+    return {
+        "type": "delivery",
+        "status": "delivered",
+        "supplier": SUPPLIER,
+        "orderId": order_id,
+        "invoiceNo": "INV-" + order_id.removeprefix("ST-"),
+        "lines": claims["lines"],
+        "total": claims["total"],
+        "totalPaise": claims["totalPaise"],
+        "deliveredAt": arrives.isoformat(),
     }

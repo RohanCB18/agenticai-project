@@ -1,8 +1,9 @@
 """The wholesaler agent's workflow, as a LangGraph graph.
 
-    understand --> quote --> END
-               |-> order --> END
-               `-> help  --> END
+    understand --> quote    --> END
+               |-> order    --> END
+               |-> delivery --> END
+               `-> help     --> END
 
 `understand` reads either a structured request (an A2A data part, which is what Munshi sends) or
 plain text from any other agent ("10 kg rice, 48 maggi"). Pricing and orders are plain code in
@@ -16,9 +17,9 @@ from typing import Any, Literal, TypedDict
 
 from langgraph.graph import END, START, StateGraph
 
-from munshi_distributor.pricing import OrderError, place_order, quote
+from munshi_distributor.pricing import OrderError, delivery_status, place_order, quote
 
-Action = Literal["quote", "order", "help"]
+Action = Literal["quote", "order", "delivery", "help"]
 
 
 class WholesalerState(TypedDict, total=False):
@@ -28,6 +29,8 @@ class WholesalerState(TypedDict, total=False):
     items: list[dict[str, Any]]
     shop: str | None
     quote_id: str | None
+    order_id: str | None
+    ordered_at: str | None
     reply: dict[str, Any]
     summary: str
 
@@ -56,6 +59,13 @@ def understand(state: WholesalerState) -> WholesalerState:
     data = state.get("data") or {}
     text = (state.get("text") or "").strip()
     action = str(data.get("action") or "").lower()
+    if action == "delivery":
+        return {
+            "action": "delivery",
+            "quote_id": data.get("quoteId"),
+            "order_id": data.get("orderId"),
+            "ordered_at": data.get("orderedAt"),
+        }
     if action == "order" or (
         not data and re.match(r"(confirm|place|order)\b", text, re.IGNORECASE) and JWT.search(text)
     ):
@@ -103,6 +113,27 @@ def make_order(state: WholesalerState) -> WholesalerState:
     }
 
 
+def check_delivery(state: WholesalerState) -> WholesalerState:
+    quote_id, order_id = state.get("quote_id"), state.get("order_id")
+    if not quote_id or not order_id:
+        reply = {
+            "type": "error",
+            "code": "missing_order",
+            "message": "Send the orderId and the quoteId it was placed from.",
+        }
+        return {"reply": reply, "summary": reply["message"]}
+    try:
+        status = delivery_status(quote_id, order_id, state.get("ordered_at"))
+    except OrderError as error:
+        reply = {"type": "error", "code": error.code, "message": str(error)}
+        return {"reply": reply, "summary": reply["message"]}
+    if status["status"] == "delivered":
+        summary = f"Order {order_id} delivered, invoice {status['invoiceNo']}, {status['total']}."
+    else:
+        summary = f"Order {order_id} is on its way: {status['deliverySlot']}."
+    return {"reply": status, "summary": summary}
+
+
 def explain(state: WholesalerState) -> WholesalerState:
     message = (
         'Send items to quote, e.g. {"action": "quote", "items": [{"name": "rice", "quantity": 25}]} '
@@ -120,10 +151,13 @@ def build_graph():
     graph.add_node("understand", understand)
     graph.add_node("quote", make_quote)
     graph.add_node("order", make_order)
+    graph.add_node("delivery", check_delivery)
     graph.add_node("help", explain)
     graph.add_edge(START, "understand")
-    graph.add_conditional_edges("understand", _route, {"quote": "quote", "order": "order", "help": "help"})
-    for node in ("quote", "order", "help"):
+    graph.add_conditional_edges(
+        "understand", _route, {"quote": "quote", "order": "order", "delivery": "delivery", "help": "help"}
+    )
+    for node in ("quote", "order", "delivery", "help"):
         graph.add_edge(node, END)
     return graph.compile()
 

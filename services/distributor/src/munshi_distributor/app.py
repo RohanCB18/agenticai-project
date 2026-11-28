@@ -84,6 +84,18 @@ def agent_card() -> AgentCard:
                 input_modes=["application/json"],
                 output_modes=["application/json"],
             ),
+            AgentSkill(
+                id="delivery_status",
+                name="Track a delivery",
+                description=(
+                    'Send {"action": "delivery", "orderId": "...", "quoteId": "..."}. Returns "on_the_way" '
+                    'with the expected time, or "delivered" with the delivery note: invoice number and the '
+                    "lines delivered, each with the shop's own name for it."
+                ),
+                tags=["ordering", "delivery"],
+                input_modes=["application/json"],
+                output_modes=["application/json"],
+            ),
         ],
     )
 
